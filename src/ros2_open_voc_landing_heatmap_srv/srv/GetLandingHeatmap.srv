@@ -1,0 +1,5 @@
+sensor_msgs/Image image
+float32 px_per_m
+---
+sensor_msgs/Image heatmap
+bool success
