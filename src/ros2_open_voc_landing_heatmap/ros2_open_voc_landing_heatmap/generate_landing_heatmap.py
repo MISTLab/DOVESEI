@@ -18,55 +18,54 @@ from rclpy.node import Node
 from cv_bridge import CvBridge
 
 
-IMG_SIZE = 352
-MIN_TOTAL_PIXELS = 100
+CLIPSEG_OUTPUT_SIZE = 352
 
 class GenerateLandingHeatmap(Node):
 
     def __init__(self):
         super().__init__('generate_landing_heatmap')
-        self.declare_parameter('prompts', "building;tree;road;water;transmission lines;post;vehicle;people")
-        self.declare_parameter('prompts2dilate', "people")
-        self.declare_parameter('dilation_dist', 30.0)
-        self.declare_parameter('dilation_threshold', 0.5)
         self.declare_parameter('safety_threshold', 0.8)
         self.declare_parameter('model_calib_cte', 40)
+        self.declare_parameter('blur_kernel_size', 15)
         #self.add_on_set_parameters_callback(self.parameters_callback)
 
-        self.prompts = self.get_parameter('prompts').value.split(';')
-        self.prompts2dilate = self.get_parameter('prompts2dilate').value.split(';')
-        self.dilation_dist = self.get_parameter('dilation_dist').value
-        self.dilation_threshold = self.get_parameter('dilation_threshold').value
         self.safety_threshold = self.get_parameter('safety_threshold').value
         self.model_calib_cte = self.get_parameter('model_calib_cte').value
+        self.blur_kernel_size = self.get_parameter('blur_kernel_size').value
 
-        # Generate the distance matrix (based on the output size of CLIPSeg - IMG_SIZE)
+        # Generate the distance matrix (based on the output size of CLIPSeg - CLIPSEG_OUTPUT_SIZE)
         # It has the distance from the centre of the matrix
-        centre_y = IMG_SIZE/2
-        centre_x = IMG_SIZE/2
+        centre_y = CLIPSEG_OUTPUT_SIZE/2
+        centre_x = CLIPSEG_OUTPUT_SIZE/2
         max_dist = np.sqrt((centre_y)**2+(centre_x)**2)
-        local_indices = np.transpose(np.nonzero(np.ones((IMG_SIZE,IMG_SIZE), dtype=float)))
+        local_indices = np.transpose(np.nonzero(np.ones((CLIPSEG_OUTPUT_SIZE,CLIPSEG_OUTPUT_SIZE), dtype=float)))
         dists = (max_dist-np.sqrt(((local_indices-[centre_y,centre_x])**2).sum(axis=1)))
         dists -= dists.min()
         dists /= dists.max()
-        self.final_dists = np.zeros((IMG_SIZE,IMG_SIZE), dtype=float)
+        self.final_dists = np.zeros((CLIPSEG_OUTPUT_SIZE,CLIPSEG_OUTPUT_SIZE), dtype=float)
         for i,(j,k) in enumerate(local_indices):
             self.final_dists[j,k] = dists[i]
 
         self.cv_bridge = CvBridge()
+
         self.srv = self.create_service(GetLandingHeatmap, 'generate_landing_heatmap', self.get_landing_heatmap_callback)
+        if torch.cuda.is_available(): self.get_logger().warn('generate_landing_heatmap is using cuda!')
         self.get_logger().info('generate_landing_heatmap is up and running!')
 
     def get_landing_heatmap_callback(self, request, response):
-        # Inputs: request.image, request.px_per_m
+        # Inputs: request.image, request.prompts, request.erosion_size
         # Outputs: response.heatmap, response.success
 
-        dilate_pixels = int(request.px_per_m*self.dilation_dist)
-
         input_image = self.cv_bridge.imgmsg_to_cv2(request.image, desired_encoding='rgb8')
+        prompts = request.prompts.split(';')
+        erosion_size = request.erosion_size
+
+        element = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, 
+                                            (2 * erosion_size + 1, 2 * erosion_size + 1),
+                                            (erosion_size, erosion_size))
 
         with torch.inference_mode():
-            inputs = processor(text=self.prompts, images=[input_image] * len(self.prompts), padding=True, return_tensors="pt")
+            inputs = processor(text=prompts, images=[input_image] * len(prompts), padding=True, return_tensors="pt")
             for k in inputs:
                 if torch.cuda.is_available():
                     inputs[k] = inputs[k].cuda()
@@ -75,36 +74,34 @@ class GenerateLandingHeatmap(Node):
             logits = model(**inputs).logits
             logits = logits.softmax(dim=1).detach().cpu().numpy()
         
-        # Apply calibration and clip to 0,1
-        logits = np.clip(logits.reshape((len(self.prompts),*logits.shape[-2:]))*self.model_calib_cte, 0, 1)
+        # Apply calibration and clip to [0,1]
+        logits = np.clip(logits.reshape((len(prompts),*logits.shape[-2:]))*self.model_calib_cte, 0, 1)
 
-        # Dilate the class that we need a minimum distance
-        # but only values above DILATE_THRS
-        for pi,p in enumerate(self.prompts):
-            if p in self.prompts2dilate:
-                dilated = cv2.filter2D((logits[pi]>self.dilation_threshold).astype('float32'),-1,
-                                        np.ones((dilate_pixels,dilate_pixels))/dilate_pixels**2)
-                # Fuse the dilated with the original using max values
-                # (the 0.01 should be 0.0, but it's needed to avoid the noise)
-                logits[pi] = np.vstack(([logits[pi]],
-                                        [(dilated>0.01).astype('float32')])).max(axis=0)
-
-        # Fuse all logits using max values
+        # Fuse all logits using the max values
         logits = 1-logits.max(axis=0)
 
-        # # Blur to smooth the ViT patches
-        # logits = cv2.filter2D(logits,-1,np.ones((6,6))/36)*self.final_dists
+        # Blur to smooth the ViT patches
+        logits = cv2.blur(logits,(self.blur_kernel_size,self.blur_kernel_size))
 
-        logits = (logits>self.safety_threshold).astype('float32')*self.final_dists
+        # Creates a mask of the best places to land
+        logits = (logits>self.safety_threshold).astype('float32')
+    
+        logits = cv2.erode(logits, element)
 
-        # (11,11) so the center is at (5,5)
-        decimated = cv2.resize(logits,(11,11),cv2.INTER_AREA)*255
+        # Apply the distance gradient
+        logits = logits*self.final_dists
+
+        # Finally, resize to match input image (CLIPSeg resizes without keeping the proportions)
+        logits = cv2.resize(logits, (input_image.shape[1],input_image.shape[0]), cv2.INTER_AREA)
+
+        # and convert to a grayscale image (0 to 255)
+        logits = (logits*255).astype('uint8')
 
         # TODO: implement some logit to decide this...
         response.success = True
         
-        # returns the decimated heatmap as grayscale image
-        response.heatmap = self.cv_bridge.cv2_to_imgmsg((decimated).astype('uint8'), encoding='mono8')
+        # returns heatmap as grayscale image
+        response.heatmap = self.cv_bridge.cv2_to_imgmsg(logits, encoding='mono8')
 
         return response
 

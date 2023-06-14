@@ -1,4 +1,4 @@
-from time import sleep
+import math
 import numpy as np
 import cv2
 from PIL import Image
@@ -34,9 +34,12 @@ class MinimalClientAsync(Node):
         self.img = msg
         self.destroy_subscription(self.img_sub)
 
-    def send_request(self, image_msg, px_per_m=1):
+    def send_request(self, image_msg, prompts, erosion_size):
+        #request.image, request.prompts, request.erosion_size
         self.req.image = image_msg
-        self.req.px_per_m = float(px_per_m)
+        # the service expects a string of prompts separated by ';'
+        self.req.prompts = ";".join(prompts)
+        self.req.erosion_size = int(erosion_size)
         self.future = self.cli.call_async(self.req)
 
         # Non-blocking example
@@ -62,20 +65,32 @@ def main():
         rclpy.spin_once(minimal_client)
     
     image_msg = minimal_client.img
-    response = minimal_client.send_request(image_msg, 1)
+
+    response = minimal_client.send_request(image_msg, 
+                                           ["building", "tree", "road", "water", "transmission lines", "lamp post", "vehicle", "people"],
+                                           7)
 
     minimal_client.get_logger().info(f'Success: {response.success}')
     
     heatmap = minimal_client.cv_bridge.imgmsg_to_cv2(response.heatmap, desired_encoding='mono8') # PIL is expecting RGB
 
+    heatmap_center = heatmap.shape[0]//2, heatmap.shape[1]//2
+    max_distance = math.sqrt(heatmap_center[0]**2+heatmap_center[1]**2)
+
     # descending order, best landing candidates
     y,x = np.dstack(np.unravel_index(np.argsort(heatmap.ravel()), heatmap.shape))[0][::-1][0]
-    # 7.07 is the distance to the corner, so max rel_dist is 1
-    rel_dist = np.sqrt((y-5)**2+(x-5)**2)/7.07
+    rel_dist = np.sqrt((y-(heatmap_center[0]-1)/2)**2+(x-(heatmap_center[0]-1)/2)**2)/max_distance
+    angle = math.degrees(math.atan2(-y,x))
+    print(f"Max pixel: {y,x}, value: {heatmap[y,x]} - Relative distance: {rel_dist:.2f} - Heading: {angle:.2f}")
 
-    print(f"Max pixel: {y,x}, value: {heatmap[y,x]} - Relative distance: {rel_dist:.2f}")
+
+    heatmap = cv2.arrowedLine(cv2.cvtColor(heatmap,cv2.COLOR_GRAY2RGB), 
+                              (heatmap_center[1],heatmap_center[0]),
+                              (x,y),
+                              color=(0,255,0), thickness=3, tipLength=.5)
+
     cv2.namedWindow('heatmap',cv2.WINDOW_NORMAL)
-    cv2.resizeWindow('heatmap', 352,352)
+    cv2.resizeWindow('heatmap', heatmap.shape[1], heatmap.shape[0])
     cv2.imshow('heatmap',heatmap)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
