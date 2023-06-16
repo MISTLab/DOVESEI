@@ -4,6 +4,7 @@ Follow the instructions from https://github.com/ricardodeazambuja/ros2_quad_sim_
 ```
 launch_ros2_desktop.sh -g --image ricardodeazambuja/ros2_quad_sim_python:pytorch
 ```
+(You can find the Dockerfiles [here](https://github.com/ricardodeazambuja/ros2_quad_sim_python/tree/main/docker))
 ```
 ros2 launch ros2_quad_sim_python launch_everything.launch.py init_pose:=[100,-100,100,0,0,0] tiltMax:=0.5
 ```
