@@ -29,4 +29,5 @@ ros2 run ros2_open_voc_landing_heatmap lander_publisher mov_avg_size:=10
 
 ## TODO
 * Improve the code
+* Fix the service call_async / future / MultiThreadedExecutor mess
 * Write launch files
