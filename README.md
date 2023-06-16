@@ -1,6 +1,6 @@
 # ros2_open_voc_landing_heatmap
 
-Following the instructions from https://github.com/ricardodeazambuja/ros2_quad_sim_python, but using:
+Follow the instructions from https://github.com/ricardodeazambuja/ros2_quad_sim_python, but using:
 ```
 launch_ros2_desktop.sh -g --image ricardodeazambuja/ros2_quad_sim_python:pytorch
 ```
