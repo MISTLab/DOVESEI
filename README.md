@@ -25,7 +25,7 @@ ros2 run ros2_open_voc_landing_heatmap getlandingheatmap_service
 
 Launch the node that will publish the twist messages:
 ```
-ros2 run ros2_open_voc_landing_heatmap lander_publisher mov_avg_size:=10
+ros2 run ros2_open_voc_landing_heatmap lander_publisher --ros-args -p mov_avg_size:=10
 ```
 
 ## TODO
