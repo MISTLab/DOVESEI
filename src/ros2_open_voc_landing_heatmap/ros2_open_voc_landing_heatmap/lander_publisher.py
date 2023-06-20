@@ -1,5 +1,3 @@
-from time import sleep
-from threading import Lock
 import math
 from threading import Event
 
@@ -51,30 +49,34 @@ class TwistPublisher(Node):
         self.cv_bridge = CvBridge()
 
         # QoS profile that will only keep the last message
-        qos_prof = QoSProfile(history=QoSHistoryPolicy.KEEP_LAST, depth=1, reliability=QoSReliabilityPolicy.BEST_EFFORT)
+        # qos_prof = QoSProfile(history=QoSHistoryPolicy.KEEP_LAST, depth=1, reliability=QoSReliabilityPolicy.BEST_EFFORT)
+        qos_prof = QoSProfile(history=QoSHistoryPolicy.KEEP_LAST, depth=1)
         self.img_sub = self.create_subscription(
             ImageMsg,
             img_topic,
-            self.img_sub_cb,
-            qos_profile=qos_prof)
+            self.img_sub_cb, qos_profile=qos_prof)
         
         self.twist_pub = self.create_publisher(Twist, self.twist_topic,1)
         self.heatmap_pub = self.create_publisher(ImageMsg, self.heatmap_topic,1)
         
 
         self.img_msg = None
-        self.lock = Lock()
 
-        self.get_logger().info('ready to publish some twist messages!')
+        self.get_logger().info('Ready to publish some twist messages!')
 
 
     def img_sub_cb(self, msg):
+            self.get_logger().warn(f'New image received!')
 
+            self.get_logger().warn(f'Sending service request...')
             response = self.send_request(msg, 
                                         ["building", "tree", "road", "water", "transmission lines", "lamp post", "vehicle", "people"],
                                         7)
+            if response is None:
+                self.get_logger().warn(f'Empty response?!?!')
+                return
             
-            self.get_logger().warn(f'Heatmap received')
+            self.get_logger().warn(f'Heatmap received!')
             heatmap_msg = response.heatmap
             heatmap = self.cv_bridge.imgmsg_to_cv2(heatmap_msg, desired_encoding='mono8')
 
@@ -127,12 +129,18 @@ class TwistPublisher(Node):
         event = Event()
         def future_done_callback(future):
             event.set()
-
+        
         future = self.cli.call_async(self.req)
         future.add_done_callback(future_done_callback)
-        event.wait()
+        
+        event.wait(timeout=5)
 
         return future.result()
+
+
+    def on_shutdown_cb(self):
+        self.get_logger().warn('Shutting down... sending zero velocities!')
+        self.twist_pub.publish(Twist())
 
 
 def main():
@@ -147,6 +155,7 @@ def main():
         pass
 
     finally:
+        lander_publisher.on_shutdown_cb()
         executor.shutdown()
         lander_publisher.destroy_node()
 
