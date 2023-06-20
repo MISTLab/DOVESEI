@@ -83,6 +83,7 @@ def main():
     angle = math.degrees(math.atan2(-y,x))
     print(f"Max pixel: {y,x}, value: {heatmap[y,x]} - Relative distance: {rel_dist:.2f} - Heading: {angle:.2f}")
 
+    cv2.imwrite("heatmap.jpg", heatmap)
 
     heatmap = cv2.arrowedLine(cv2.cvtColor(heatmap,cv2.COLOR_GRAY2RGB), 
                               (heatmap_center[1],heatmap_center[0]),

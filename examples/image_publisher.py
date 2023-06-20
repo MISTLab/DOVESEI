@@ -11,13 +11,13 @@ class ImagePublisher(Node):
     def __init__(self):
         super().__init__('image_publisher')
         
-        self.declare_parameter('image_path', 'carla.png')
+        self.declare_parameter('image_path', 'home.jpg')
         self.declare_parameter('topic', '/carla/flying_sensor/rgb_down/image')
-        self.declare_parameter('delta_t', 1.0)
+        self.declare_parameter('delta_t', 0.02)
         self.declare_parameter('output_size', 352)
         self.image_path = self.get_parameter('image_path').value
         self.topic = self.get_parameter('topic').value
-        delta_t = self.get_parameter('delta_t').value
+        self.delta_t = self.get_parameter('delta_t').value
         output_size = self.get_parameter('output_size').value
         
 
@@ -29,7 +29,7 @@ class ImagePublisher(Node):
         
         self.img_pub = self.create_publisher(ImageMsg, self.topic,1)
 
-        self.img_timer = self.create_timer(delta_t, self.on_img_timer)
+        self.img_timer = self.create_timer(self.delta_t, self.on_img_timer)
 
     def on_img_timer(self):
         self.img_pub.publish(self.img_msg)
@@ -38,7 +38,7 @@ class ImagePublisher(Node):
 def main():
     rclpy.init()
     image_publisher = ImagePublisher()
-    image_publisher.get_logger().info(f'Publishing image {image_publisher.image_path} at topic {image_publisher.topic}')
+    image_publisher.get_logger().info(f'Publishing image {image_publisher.image_path} at topic {image_publisher.topic} ({1/image_publisher.delta_t}Hz)')
     try:
         rclpy.spin(image_publisher)
     except KeyboardInterrupt:
