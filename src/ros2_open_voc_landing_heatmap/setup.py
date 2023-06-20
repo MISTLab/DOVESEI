@@ -22,6 +22,7 @@ setup(
         'console_scripts': [
             'getlandingheatmap_service = ros2_open_voc_landing_heatmap.generate_landing_heatmap:main',
             'lander_publisher = ros2_open_voc_landing_heatmap.lander_publisher:main',
+            'getlandingheatmap_gt_service = ros2_open_voc_landing_heatmap.generate_landing_heatmap_groundtruth:main',
         ],
     },
 )
