@@ -28,6 +28,12 @@ Launch the node that will publish the twist messages:
 ros2 run ros2_open_voc_landing_heatmap lander_publisher --ros-args -p mov_avg_size:=10
 ```
 
+It's also possible to generate the heatmap using CARLA's semantic segmentation sensor (must be enabled in the [json config file](https://github.com/ricardodeazambuja/ros2_quad_sim_python/blob/24747bb8c7d0cb3f35087b4154da1cfbec49527a/src/ros2_quad_sim_python/cfg/flying_sensor_full.json)) as a way to compare against the open vocabulary one without changing the `lander_publisher` node:
+```
+ros2 run ros2_open_voc_landing_heatmap getlandingheatmap_gt_service
+```
+
+
 ## TODO
 * Improve the code
 * Fix the service call_async / future / MultiThreadedExecutor mess
