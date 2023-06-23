@@ -56,6 +56,8 @@ class GenerateLandingHeatmap(Node):
         # Inputs: request.image, request.prompts, request.erosion_size
         # Outputs: response.heatmap, response.success
 
+        self.get_logger().info('New request received!')
+
         input_image = self.cv_bridge.imgmsg_to_cv2(request.image, desired_encoding='rgb8')
         prompts = request.prompts.split(';')
         erosion_size = request.erosion_size
@@ -103,6 +105,7 @@ class GenerateLandingHeatmap(Node):
         # returns heatmap as grayscale image
         response.heatmap = self.cv_bridge.cv2_to_imgmsg(logits, encoding='mono8')
 
+        self.get_logger().info('Returning!')
         return response
 
 
