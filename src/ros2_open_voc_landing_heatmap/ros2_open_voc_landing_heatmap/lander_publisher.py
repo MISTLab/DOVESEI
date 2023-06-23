@@ -28,6 +28,7 @@ from cv_bridge import CvBridge
 
 
 EPS = 0.001
+MAX_ALT = 100
 class TwistPublisher(Node):
 
     def __init__(self):
@@ -187,7 +188,7 @@ class TwistPublisher(Node):
 
 
 
-    def error_from_semantics(self, rgbmsg):
+    def error_from_semantics(self, rgbmsg, altitude):
         self.get_logger().warn(f'Sending heatmap service request...')
         response = self.get_heatmap(rgbmsg, 
                                     ["building", "tree", "road", "water", "transmission lines", "lamp post", "vehicle", "people"],
@@ -218,6 +219,8 @@ class TwistPublisher(Node):
             self.mov_avg_counter += 1
         else:
             self.mov_avg_counter = 0
+
+        # TODO: change heatmap_resized according to the altitude
 
         heatmap_center = heatmap_resized.shape[0]/2, heatmap_resized.shape[1]/2
         # descending order, best landing candidates
@@ -255,13 +258,13 @@ class TwistPublisher(Node):
 
             x_err = y_err = 0.0
             if altitude > self.min_altitude_semantics:
-                x_err,y_err = self.error_from_semantics(rgbmsg)
+                x_err,y_err = self.error_from_semantics(rgbmsg, altitude)
 
             self.get_logger().info(f"Segmentation X,Y err: {x_err:.2f},{y_err:.2f}, Depth Cluster X,Y err: {xd_err:.2f},{yd_err:.2f}")
             self.get_logger().info(f"Mean depth under drone: {mean_depth_under_drone:.2f}, Altitude: {altitude:.2f}")
             
             
-            # TODO: FUSE THE DEPTH AND THE HEATMAP
+            # TODO: FUSE error_from_depth_clusters and error_from_semantics
             x = x_err
             y = y_err
 
