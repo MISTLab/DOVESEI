@@ -36,6 +36,7 @@ class TwistPublisher(Node):
         self.declare_parameter('img_topic', '/carla/flying_sensor/rgb_down/image')
         self.declare_parameter('depth_topic', '/carla/flying_sensor/depth_down/image')
         self.declare_parameter('heatmap_topic', '/heatmap')
+        self.declare_parameter('depth_cluster_topic', '/depth_cluster')
         self.declare_parameter('twist_topic', '/quadctrl/flying_sensor/ctrl_twist_sp')
         self.declare_parameter('mov_avg_size', 10)
         self.declare_parameter('resize', 15)
@@ -48,6 +49,7 @@ class TwistPublisher(Node):
         img_topic = self.get_parameter('img_topic').value
         depth_topic = self.get_parameter('depth_topic').value
         self.heatmap_topic = self.get_parameter('heatmap_topic').value
+        self.depth_cluster_topic = self.get_parameter('depth_cluster_topic').value
         self.twist_topic = self.get_parameter('twist_topic').value
         self.mov_avg_size = self.get_parameter('mov_avg_size').value
         self.resize = self.get_parameter('resize').value
@@ -82,6 +84,7 @@ class TwistPublisher(Node):
                 
         self.twist_pub = self.create_publisher(Twist, self.twist_topic,1)
         self.heatmap_pub = self.create_publisher(ImageMsg, self.heatmap_topic,1)
+        self.depth_cluster_pub = self.create_publisher(ImageMsg, self.depth_cluster_topic,1)
 
         self.tf_trials = 5
         self.tf_buffer = Buffer()
@@ -160,6 +163,7 @@ class TwistPublisher(Node):
         labels = labels.ravel() # to match scikit-learn kmeans
         unique_labels, counts_labels = np.unique(labels[labels>=0], return_counts=True)
 
+        depth_copy = np.ones(depth.shape, dtype='uint8')*255
         objectives = []
         for l in unique_labels:
             tmp = X[labels==l][:,:2]
@@ -179,11 +183,15 @@ class TwistPublisher(Node):
             l = np.argsort(objectives)[-1]
             x = -(centers[l][0] - int(depth_center[0])) / depth_center[0]
             y = (centers[l][1] - int(depth_center[1])) / depth_center[1]
+            depth_copy[(labels==l).reshape(depth.shape)] = 0 # indicates best cluster to land
         
         xc = int(depth_center[0])
         yc = int(depth_center[1])
         halfside = int(self.mean_depth_side/2)
         mean_depth_under_drone = (depth[xc-halfside:xc+halfside,yc-halfside:yc+halfside]*max_dist).mean()
+        
+        img_msg = self.cv_bridge.cv2_to_imgmsg(depth_copy, encoding='mono8')
+        self.depth_cluster_pub.publish(img_msg)
         return x,y,mean_depth_under_drone
 
 
@@ -252,7 +260,7 @@ class TwistPublisher(Node):
         if altitude is None:
             return
         
-        x = y = 0.0
+        x = y = z = 0.0
         if not self.landing_done:
             xd_err,yd_err,mean_depth_under_drone = self.error_from_depth_clusters(depthmsg)
 
