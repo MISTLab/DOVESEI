@@ -9,7 +9,7 @@ trap 'echo Killing avahi-publish with PID $AVAHI_PUB_PID && kill $AVAHI_PUB_PID'
 XAUTHORITY_DOCKER=
 FILE=$HOME/.Xauthority
 if [ -f "$FILE" ]; then
-    XAUTHORITY_DOCKER="--mount type=bind,source=/home/$USER/.Xauthority,target=/home/carla/.Xauthority"
+    XAUTHORITY_DOCKER="--mount type=bind,source=/home/$USER/.Xauthority,target=/home/ros2user/.Xauthority"
 else 
     echo "If you are launching this through a remote computer connected using ssh -X, it won't work because you don't have $FILE."
     echo "Just use 'touch ~/.Xauthority' and log out/in and it will be fine."
