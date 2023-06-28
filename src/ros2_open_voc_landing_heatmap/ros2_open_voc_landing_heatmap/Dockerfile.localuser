@@ -1,0 +1,10 @@
+FROM ricardodeazambuja/ros2_quad_sim_python:pytorch
+
+ARG UID=
+ARG GID=
+USER root
+
+RUN usermod -u $UID ros2user
+RUN groupmod -g $GID ros2user
+
+USER ros2user
