@@ -181,8 +181,8 @@ class TwistPublisher(Node):
             y = 0.0
         else:
             l = np.argsort(objectives)[-1]
-            x = -(centers[l][0] - int(depth_center[0])) / depth_center[0]
-            y = (centers[l][1] - int(depth_center[1])) / depth_center[1]
+            x = -(centers[l][0]*depth.shape[0] - int(depth_center[0])) / depth_center[0]
+            y = (centers[l][1]*depth.shape[1] - int(depth_center[1])) / depth_center[1]
             depth_copy[(labels==l).reshape(depth.shape)] = 0 # indicates best cluster to land
         
         xc = int(depth_center[0])
@@ -291,6 +291,7 @@ class TwistPublisher(Node):
         twist.linear.x = x * self.gain
         twist.linear.y = -y * self.gain
         twist.linear.z = z
+        # twist.linear.x = twist.linear.y = twist.linear.z = 0.0 ##DEBUG
         twist.angular.x = 0.0
         twist.angular.y = 0.0
         twist.angular.z = 0.0
