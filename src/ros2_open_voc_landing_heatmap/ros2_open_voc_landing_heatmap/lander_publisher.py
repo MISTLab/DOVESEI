@@ -279,10 +279,10 @@ class TwistPublisher(Node):
             x = x if abs(x) > EPS else 0.0
             y = y if abs(y) > EPS else 0.0
 
-            z = -self.z_speed if (x+y)==0.0 else 0.0
+            z = -self.z_speed if (abs(x)+abs(y))==0.0 else 0.0
 
 
-        if altitude<self.altitude_landed and (x+y)==0.0:
+        if altitude<self.altitude_landed and (abs(x)+abs(y))==0.0:
             x = y = z = 0.0
             self.get_logger().warn("Landed!")
             self.landing_done = True
