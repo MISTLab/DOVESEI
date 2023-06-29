@@ -22,6 +22,7 @@ docker run --rm --gpus 'all,"capabilities=graphics,utility,display,video,compute
 --user $(id -u):$(id -g) --group-add sudo \
 --env=DISPLAY=$DISPLAY --env=QT_X11_NO_MITSHM=1 \
 --volume /tmp/.X11-unix:/tmp/.X11-unix \
+--volume $(pwd):/home/ros2user/host \
 $XAUTHORITY_DOCKER \
 ros2_open_voc_landing_heatmap:$USER \
 bash
