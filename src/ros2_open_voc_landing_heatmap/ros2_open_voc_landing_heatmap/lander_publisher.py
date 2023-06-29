@@ -27,8 +27,8 @@ from message_filters import ApproximateTimeSynchronizer, Subscriber
 from cv_bridge import CvBridge
 
 
+DEPTH_XYERR_GAIN = 0.1
 EPS = 0.001
-MAX_ALT = 100
 class TwistPublisher(Node):
 
     def __init__(self):
@@ -45,7 +45,7 @@ class TwistPublisher(Node):
         self.declare_parameter('depth_new_size', 100)
         self.declare_parameter('mean_depth_side', 20)
         self.declare_parameter('altitude_landed', 1)
-        self.declare_parameter('min_altitude_semantics', 10)
+        self.declare_parameter('min_altitude_semantics', 80)
         img_topic = self.get_parameter('img_topic').value
         depth_topic = self.get_parameter('depth_topic').value
         self.heatmap_topic = self.get_parameter('heatmap_topic').value
@@ -128,14 +128,13 @@ class TwistPublisher(Node):
             self.get_logger().error(f'Could not transform {map_frame} to {target_frame}: {ex}')
 
 
-    def error_from_depth_clusters(self, depthmsg, dist_weight = 2, n_clusters = 2, max_dist=20):
+    def error_from_depth_clusters(self, depthmsg, dist_weight = 2, n_clusters = 5, max_dist=100):
         depth = self.cv_bridge.imgmsg_to_cv2(depthmsg, desired_encoding='passthrough')
         depth = np.asarray(cv2.resize(depth, (int(self.depth_new_size*depth.shape[1]/depth.shape[0]),self.depth_new_size)))
         # In CARLA the depth goes up to 1000m, but we want up to 20m
         depth[depth>max_dist] = np.nan
         depth = depth/max_dist
         depth[np.isnan(depth)] = 1.0
-        depth += np.random.rand(*depth.shape)*0.001
 
         depth_center = depth.shape[0]/2, depth.shape[1]/2
 
@@ -166,24 +165,22 @@ class TwistPublisher(Node):
         depth_copy = np.ones(depth.shape, dtype='uint8')*255
         objectives = []
         for l in unique_labels:
-            tmp = X[labels==l][:,:2]
-            area_ratio = ((tmp[:,0].max()-tmp[:,0].min())*depth.shape[0]*(tmp[:,1].max()-tmp[:,1].min())*depth.shape[1])/tmp.shape[0]
             z_label = z.ravel()[labels==l]
-            z_std = z_label.std()
-            objective = 1/(z_std*area_ratio)
+            objective = z_label.std()
             objectives.append(objective) # unique_labels are sorted...
 
         objectives = np.asarray(objectives)
-
-        if objectives.std() < objectives.mean()*0.1:
-            # don't move...
-            x = 0.0
-            y = 0.0
+        
+        step = 255/len(unique_labels)
+        for i,l in enumerate(np.argsort(objectives)):
+            depth_copy[(labels==l).reshape(depth.shape)] = i*step # indicates best cluster to land
+        
+        if objectives.std() < 0.01:
+            x = y = 0
         else:
-            l = np.argsort(objectives)[-1]
+            l = np.argsort(objectives)[0]
             x = -(centers[l][0]*depth.shape[0] - int(depth_center[0])) / depth_center[0]
             y = (centers[l][1]*depth.shape[1] - int(depth_center[1])) / depth_center[1]
-            depth_copy[(labels==l).reshape(depth.shape)] = 0 # indicates best cluster to land
         
         xc = int(depth_center[0])
         yc = int(depth_center[1])
@@ -196,10 +193,10 @@ class TwistPublisher(Node):
 
 
 
-    def error_from_semantics(self, rgbmsg, altitude):
+    def error_from_semantics(self, rgbmsg, altitude, prompts):
         self.get_logger().warn(f'Sending heatmap service request...')
         response = self.get_heatmap(rgbmsg, 
-                                    ["building", "tree", "road", "water", "transmission lines", "lamp post", "vehicle", "people"],
+                                    prompts,
                                     7)
         if response is None:
             self.get_logger().warn(f'Empty response?!?!')
@@ -263,18 +260,18 @@ class TwistPublisher(Node):
         if not self.landing_done:
             xd_err,yd_err,mean_depth_under_drone = self.error_from_depth_clusters(depthmsg)
 
-            x_err = y_err = 0.0
-            if altitude > self.min_altitude_semantics:
-                x_err,y_err = self.error_from_semantics(rgbmsg, altitude)
+            xs_err = ys_err = 0.0
+            prompts = ["building", "tree", "road", "water", "transmission lines", "lamp post", "vehicle", "people"]
+            if altitude <= self.min_altitude_semantics:
+                prompts = ["vehicle", "people"]
 
-            self.get_logger().info(f"Segmentation X,Y err: {x_err:.2f},{y_err:.2f}, Depth Cluster X,Y err: {xd_err:.2f},{yd_err:.2f}")
+            xs_err,ys_err = self.error_from_semantics(rgbmsg, altitude, prompts)
+            self.get_logger().info(f"Current prompts: {prompts}")
+            self.get_logger().info(f"Segmentation X,Y err: {xs_err:.2f},{ys_err:.2f}, Depth Cluster X,Y err: {xd_err:.2f},{yd_err:.2f}")
             self.get_logger().info(f"Mean depth under drone: {mean_depth_under_drone:.2f}, Altitude: {altitude:.2f}")
             
-            
-            # TODO: FUSE error_from_depth_clusters and error_from_semantics
-            x = x_err
-            y = y_err
-
+            x = xs_err + xd_err*DEPTH_XYERR_GAIN
+            y = ys_err + yd_err*DEPTH_XYERR_GAIN
 
             x = x if abs(x) > EPS else 0.0
             y = y if abs(y) > EPS else 0.0
@@ -282,7 +279,7 @@ class TwistPublisher(Node):
             z = -self.z_speed if (abs(x)+abs(y))==0.0 else 0.0
 
 
-        if altitude<self.altitude_landed and (abs(x)+abs(y))==0.0:
+        if altitude<self.altitude_landed:
             x = y = z = 0.0
             self.get_logger().warn("Landed!")
             self.landing_done = True
