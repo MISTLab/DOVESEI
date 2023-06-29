@@ -245,7 +245,6 @@ class TwistPublisher(Node):
 
 
     def get_rangefinder(self):
-        self.get_tf()
         res = self.get_tf()
         if res is None:
             return None
