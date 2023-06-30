@@ -26,9 +26,13 @@ from message_filters import ApproximateTimeSynchronizer, Subscriber
 
 from cv_bridge import CvBridge
 
-GIVEUPAT = 10
-FOV = math.radians(73)
+
+FOV = math.radians(73) #TODO: get this from the camera topic...
+
+PROMPTS_SEARCHING = ["building", "tree", "road", "water", "transmission lines", "lamp post", "vehicle", "people"]
+PROMPTS_DESCENDING = ["vehicle", "people"]
 EPS = 0.001
+# MAX_SEG_HEIGHT = 17 # helps filtering noise
 class TwistPublisher(Node):
 
     def __init__(self):
@@ -36,7 +40,7 @@ class TwistPublisher(Node):
         self.declare_parameter('img_topic', '/carla/flying_sensor/rgb_down/image')
         self.declare_parameter('depth_topic', '/carla/flying_sensor/depth_down/image')
         self.declare_parameter('heatmap_topic', '/heatmap')
-        self.declare_parameter('depth_cluster_topic', '/depth_cluster')
+        self.declare_parameter('depth_proj_topic', '/depth_proj')
         self.declare_parameter('twist_topic', '/quadctrl/flying_sensor/ctrl_twist_sp')
         self.declare_parameter('mov_avg_size', 10)
         self.declare_parameter('gain', 20)
@@ -47,10 +51,11 @@ class TwistPublisher(Node):
         self.declare_parameter('altitude_landed', 1)
         self.declare_parameter('safe_altitude', 80)
         self.declare_parameter('safety_radius', 1.0)
+        self.declare_parameter('giveup_after_sec', 5)
         img_topic = self.get_parameter('img_topic').value
         depth_topic = self.get_parameter('depth_topic').value
         self.heatmap_topic = self.get_parameter('heatmap_topic').value
-        self.depth_cluster_topic = self.get_parameter('depth_cluster_topic').value
+        self.depth_proj_topic = self.get_parameter('depth_proj_topic').value
         self.twist_topic = self.get_parameter('twist_topic').value
         self.mov_avg_size = self.get_parameter('mov_avg_size').value
         self.gain = self.get_parameter('gain').value
@@ -61,6 +66,7 @@ class TwistPublisher(Node):
         self.altitude_landed = self.get_parameter('altitude_landed').value
         self.safe_altitude = self.get_parameter('safe_altitude').value
         self.safety_radius = self.get_parameter('safety_radius').value
+        self.giveup_after_sec = self.get_parameter('giveup_after_sec').value
         
 
         
@@ -72,12 +78,12 @@ class TwistPublisher(Node):
 
         self.landing_done = False
 
-        self.giveup_timer = None
+        self.giveup_timer = 0
 
         self.cli = self.create_client(GetLandingHeatmap, 'generate_landing_heatmap',
                                       callback_group=ReentrantCallbackGroup())
         while not self.cli.wait_for_service(timeout_sec=1.0):
-            self.get_logger().info('generate_landing_heatmap service not available, waiting again...')
+            self.get_logger().warn('generate_landing_heatmap service not available, waiting again...')
         self.req = GetLandingHeatmap.Request()
         self.cv_bridge = CvBridge()
 
@@ -87,7 +93,7 @@ class TwistPublisher(Node):
                 
         self.twist_pub = self.create_publisher(Twist, self.twist_topic,1)
         self.heatmap_pub = self.create_publisher(ImageMsg, self.heatmap_topic,1)
-        self.depth_cluster_pub = self.create_publisher(ImageMsg, self.depth_cluster_topic,1)
+        self.depth_proj_pub = self.create_publisher(ImageMsg, self.depth_proj_topic,1)
 
         self.tf_trials = 5
         self.tf_buffer = Buffer()
@@ -151,22 +157,22 @@ class TwistPublisher(Node):
         depth = cv2.bitwise_and(depth, mask)
         
         img_msg = self.cv_bridge.cv2_to_imgmsg(depth.astype('uint8'), encoding='mono8')
-        self.depth_cluster_pub.publish(img_msg)
+        self.depth_proj_pub.publish(img_msg)
         return depth[depth>0].std(),depth[depth>0].mean()
 
 
 
     def error_from_semantics(self, rgbmsg, altitude, prompts):
         proj = math.tan(FOV/2)*altitude
-        self.get_logger().warn(f'Sending heatmap service request...')
+        self.get_logger().debug(f'Sending heatmap service request...')
         response = self.get_heatmap(rgbmsg, 
                                     prompts,
                                     7)
         if response is None:
-            self.get_logger().warn(f'Empty response?!?!')
+            self.get_logger().error(f'Empty response?!?!')
             return
         
-        self.get_logger().warn(f'Heatmap received!')
+        self.get_logger().debug(f'Heatmap received!')
         heatmap_msg = response.heatmap
         heatmap = self.cv_bridge.imgmsg_to_cv2(heatmap_msg, desired_encoding='mono8')
         
@@ -178,6 +184,7 @@ class TwistPublisher(Node):
         safety_radius_pixels = int(2*self.safety_radius/(proj/heatmap.shape[1]))
         resize = heatmap.shape[0]//safety_radius_pixels
         resize += 1-(resize % 2) # always odd
+        # resize = resize if resize < MAX_SEG_HEIGHT else MAX_SEG_HEIGHT
         resize_w = int(resize*(heatmap.shape[1]/heatmap.shape[0]))
         resize_w = resize_w + 1-(resize_w % 2) # always odd
 
@@ -204,7 +211,7 @@ class TwistPublisher(Node):
         x = (-(x_idx - int(heatmap_center[0]))) / heatmap_center[0]
         y = (y_idx - int(heatmap_center[1])) / heatmap_center[1]
 
-        self.get_logger().warn(f'Publishing resized heatmap image at {self.heatmap_topic}')
+        self.get_logger().debug(f'Publishing resized heatmap image at {self.heatmap_topic}')
         img_msg = self.cv_bridge.cv2_to_imgmsg(heatmap_resized, encoding='mono8')
         self.heatmap_pub.publish(img_msg)
         return x,y
@@ -216,24 +223,35 @@ class TwistPublisher(Node):
             return None
         t, init_pos, init_quat = res
         return init_pos[2]
+    
+
+    def shutdown_after_landed(self):
+        # TODO: implement procedures after landed
+        self.get_logger().error("Landed!")
 
 
     def sense_and_act(self, rgbmsg, depthmsg):
-        self.get_logger().warn(f'New data received!')
+        self.get_logger().debug(f'New data received!')
 
         altitude = self.get_rangefinder()
         if altitude is None:
             return
         
+        if self.giveup_timer == 0:
+            time_since_giveup = 0
+        else:
+            time_since_giveup = (self.get_clock().now().nanoseconds/1E9 - self.giveup_timer)
+            self.get_logger().warn(f"Time since giveup_timer enabled: {time_since_giveup}")
+
         x = y = z = 0.0
         if not self.landing_done:
             depth_std, depth_mean = self.depth_proj(depthmsg, altitude)
 
             xs_err = ys_err = 0.0
-            prompts = ["building", "tree", "road", "water", "transmission lines", "lamp post", "vehicle", "people"]
+            prompts = PROMPTS_SEARCHING
             if altitude < self.safe_altitude:
-                self.get_logger().info(f"Safe altitude reached!")    
-                prompts = ["vehicle", "people"]
+                self.get_logger().warn(f"Safe altitude breached, no movements allowed on XY!")    
+                prompts = PROMPTS_DESCENDING
 
             xs_err,ys_err = self.error_from_semantics(rgbmsg, altitude, prompts)
             self.get_logger().info(f"Current prompts: {prompts}")
@@ -243,26 +261,34 @@ class TwistPublisher(Node):
             x = xs_err
             y = ys_err
 
+            # Very rudimentary filter
             x = x if abs(x) > EPS else 0.0
             y = y if abs(y) > EPS else 0.0
 
             if altitude >= self.safe_altitude:
-                z = -self.z_speed if (abs(x)+abs(y))==0.0 else 0.0
-                self.giveup_timer = 0
+                if (abs(x)+abs(y)) == 0.0:
+                    z = -self.z_speed  
+                self.giveup_timer = 0 # safe altitude, reset give up timer
             else:
-                if (abs(x)+abs(y))==0.0 and depth_std < self.depth_smoothness and self.giveup_timer < GIVEUPAT:
+                if (abs(x)+abs(y)) == 0.0 and \
+                   (depth_std < self.depth_smoothness) and \
+                   (time_since_giveup <= self.giveup_after_sec):
                     z = -self.z_speed
                 else:
+                    if self.giveup_timer == 0:
+                        self.giveup_timer = self.get_clock().now().nanoseconds/1E9
                     z = self.z_speed
-                    self.giveup_timer += 1
 
 
         if altitude<self.altitude_landed:
             x = y = z = 0.0
-            self.get_logger().warn("Landed!")
             self.landing_done = True
+            self.shutdown_after_landed()
 
         twist = Twist()
+        # The UAV's maximum bank angle is limited to a very small value
+        # and this is why such a simple control works.
+        # TODO: improve controller to work with bigger bank angles
         twist.linear.x = x * self.gain
         twist.linear.y = -y * self.gain
         twist.linear.z = z
@@ -271,7 +297,7 @@ class TwistPublisher(Node):
         twist.angular.y = 0.0
         twist.angular.z = 0.0
 
-        self.get_logger().warn(f'Publishing velocities ({(twist.linear.x, twist.linear.y, twist.linear.z)}) at {self.twist_topic}')
+        self.get_logger().info(f'Publishing velocities ({(twist.linear.x, twist.linear.y, twist.linear.z)}) at {self.twist_topic}')
         self.twist_pub.publish(twist)
 
 
@@ -297,7 +323,7 @@ class TwistPublisher(Node):
 
 
     def on_shutdown_cb(self):
-        self.get_logger().warn('Shutting down... sending zero velocities!')
+        self.get_logger().error('Shutting down... sending zero velocities!')
         self.twist_pub.publish(Twist())
 
 
