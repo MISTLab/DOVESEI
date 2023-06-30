@@ -26,8 +26,8 @@ from message_filters import ApproximateTimeSynchronizer, Subscriber
 
 from cv_bridge import CvBridge
 
-
-DEPTH_XYERR_GAIN = 0.1
+GIVEUPAT = 10
+FOV = math.radians(73)
 EPS = 0.001
 class TwistPublisher(Node):
 
@@ -39,28 +39,29 @@ class TwistPublisher(Node):
         self.declare_parameter('depth_cluster_topic', '/depth_cluster')
         self.declare_parameter('twist_topic', '/quadctrl/flying_sensor/ctrl_twist_sp')
         self.declare_parameter('mov_avg_size', 10)
-        self.declare_parameter('resize', 15)
         self.declare_parameter('gain', 20)
         self.declare_parameter('z_speed', 1.0)
         self.declare_parameter('depth_new_size', 100)
+        self.declare_parameter('depth_smoothness', 0.2)
         self.declare_parameter('mean_depth_side', 20)
         self.declare_parameter('altitude_landed', 1)
-        self.declare_parameter('min_altitude_semantics', 80)
+        self.declare_parameter('safe_altitude', 80)
+        self.declare_parameter('safety_radius', 1.0)
         img_topic = self.get_parameter('img_topic').value
         depth_topic = self.get_parameter('depth_topic').value
         self.heatmap_topic = self.get_parameter('heatmap_topic').value
         self.depth_cluster_topic = self.get_parameter('depth_cluster_topic').value
         self.twist_topic = self.get_parameter('twist_topic').value
         self.mov_avg_size = self.get_parameter('mov_avg_size').value
-        self.resize = self.get_parameter('resize').value
         self.gain = self.get_parameter('gain').value
         self.z_speed = self.get_parameter('z_speed').value
         self.depth_new_size = self.get_parameter('depth_new_size').value
-        self.altitude_landed = self.get_parameter('altitude_landed').value
-        self.min_altitude_semantics = self.get_parameter('min_altitude_semantics').value
+        self.depth_smoothness = self.get_parameter('depth_smoothness').value
         self.mean_depth_side = self.get_parameter('mean_depth_side').value
-
-        assert (self.resize % 2) == 1, self.get_logger().error('resize parameter MUST be odd!')
+        self.altitude_landed = self.get_parameter('altitude_landed').value
+        self.safe_altitude = self.get_parameter('safe_altitude').value
+        self.safety_radius = self.get_parameter('safety_radius').value
+        
 
         
         self.mov_avg_counter = 0
@@ -70,6 +71,8 @@ class TwistPublisher(Node):
         self.img_msg = None
 
         self.landing_done = False
+
+        self.giveup_timer = None
 
         self.cli = self.create_client(GetLandingHeatmap, 'generate_landing_heatmap',
                                       callback_group=ReentrantCallbackGroup())
@@ -100,6 +103,7 @@ class TwistPublisher(Node):
              )
         
         tss.registerCallback(self.sense_and_act)
+
         self.get_logger().info('Ready to publish some twist messages!')
 
 
@@ -128,72 +132,32 @@ class TwistPublisher(Node):
             self.get_logger().error(f'Could not transform {map_frame} to {target_frame}: {ex}')
 
 
-    def error_from_depth_clusters(self, depthmsg, dist_weight = 2, n_clusters = 5, max_dist=100):
+    def depth_proj(self, depthmsg, altitude, max_dist=20):
+        proj = math.tan(FOV/2)*altitude
+
         depth = self.cv_bridge.imgmsg_to_cv2(depthmsg, desired_encoding='passthrough')
-        depth = np.asarray(cv2.resize(depth, (int(self.depth_new_size*depth.shape[1]/depth.shape[0]),self.depth_new_size)))
+        depth = np.asarray(cv2.resize(depth, 
+                                      (int(self.depth_new_size*depth.shape[1]/depth.shape[0]),self.depth_new_size),
+                                      cv2.INTER_AREA))
         # In CARLA the depth goes up to 1000m, but we want up to 20m
         depth[depth>max_dist] = np.nan
-        depth = depth/max_dist
-        depth[np.isnan(depth)] = 1.0
+        depth[np.isnan(depth)] = max_dist
 
-        depth_center = depth.shape[0]/2, depth.shape[1]/2
+        depth_center = depth.shape[0]//2, depth.shape[1]//2
 
-        ij = np.argwhere(depth>=0).astype(float)
-        ij[:,0] /= depth.shape[0] # values (coordinates) become [0,1]
-        ij[:,1] /= depth.shape[1] # values (coordinates) become [0,1]
-        z = depth.reshape(np.prod(depth.shape),1)
-
-        X = np.hstack((ij,dist_weight*z))
-        # At this point it should have a filter to exclude infs or nans
-        # X = X[np.isfinite(X)] # checks for both inf and nan
-
-        # Define criteria = ( type, max_iter, epsilon)
-        max_iter = 300
-        epsilon = 0.001
-        criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, max_iter, epsilon)
-        # Set flags (Just to avoid line break in the code)
-        flags = cv2.KMEANS_PP_CENTERS # same as sklearn default
-
-        attempts = 10
-
-        # Apply KMeans
-        compactness,labels,centers = cv2.kmeans(np.float32(X),n_clusters,None,criteria,attempts,flags)
-
-        labels = labels.ravel() # to match scikit-learn kmeans
-        unique_labels, counts_labels = np.unique(labels[labels>=0], return_counts=True)
-
-        depth_copy = np.ones(depth.shape, dtype='uint8')*255
-        objectives = []
-        for l in unique_labels:
-            z_label = z.ravel()[labels==l]
-            objective = z_label.std()
-            objectives.append(objective) # unique_labels are sorted...
-
-        objectives = np.asarray(objectives)
+        safety_radius_pixels = int(self.safety_radius/(proj/depth.shape[1]))
+        mask = np.zeros_like(depth)
+        mask = cv2.circle(mask, (depth_center[1],depth_center[0]), safety_radius_pixels, (255,255,255), -1)
+        depth = cv2.bitwise_and(depth, mask)
         
-        step = 255/len(unique_labels)
-        for i,l in enumerate(np.argsort(objectives)):
-            depth_copy[(labels==l).reshape(depth.shape)] = i*step # indicates best cluster to land
-        
-        if objectives.std() < 0.01:
-            x = y = 0
-        else:
-            l = np.argsort(objectives)[0]
-            x = -(centers[l][0]*depth.shape[0] - int(depth_center[0])) / depth_center[0]
-            y = (centers[l][1]*depth.shape[1] - int(depth_center[1])) / depth_center[1]
-        
-        xc = int(depth_center[0])
-        yc = int(depth_center[1])
-        halfside = int(self.mean_depth_side/2)
-        mean_depth_under_drone = (depth[xc-halfside:xc+halfside,yc-halfside:yc+halfside]*max_dist).mean()
-        
-        img_msg = self.cv_bridge.cv2_to_imgmsg(depth_copy, encoding='mono8')
+        img_msg = self.cv_bridge.cv2_to_imgmsg(depth.astype('uint8'), encoding='mono8')
         self.depth_cluster_pub.publish(img_msg)
-        return x,y,mean_depth_under_drone
+        return depth[depth>0].std(),depth[depth>0].mean()
 
 
 
     def error_from_semantics(self, rgbmsg, altitude, prompts):
+        proj = math.tan(FOV/2)*altitude
         self.get_logger().warn(f'Sending heatmap service request...')
         response = self.get_heatmap(rgbmsg, 
                                     prompts,
@@ -211,21 +175,27 @@ class TwistPublisher(Node):
         # heatmap[:50,:50] = 255
         # heatmap[-50:,-50:] = 255
 
-        if self.heatmap_mov_avg is None:
-            resize_w = int(self.resize*(heatmap.shape[1]/heatmap.shape[0]))
-            resize_w = resize_w + 1-(resize_w % 2) # always odd
-            self.heatmap_mov_avg = np.zeros((self.mov_avg_size, self.resize, resize_w), dtype='uint8')
-        
-        heatmap_resized = cv2.resize(heatmap,(self.heatmap_mov_avg.shape[2],self.heatmap_mov_avg.shape[1]),cv2.INTER_AREA)
+        safety_radius_pixels = int(self.safety_radius/(proj/heatmap.shape[1]))
+        resize = heatmap.shape[0]//safety_radius_pixels
+        resize += 1-(resize % 2) # always odd
+        resize_w = int(resize*(heatmap.shape[1]/heatmap.shape[0]))
+        resize_w = resize_w + 1-(resize_w % 2) # always odd
 
-        self.heatmap_mov_avg[self.mov_avg_counter] = heatmap_resized
-        heatmap_resized = self.heatmap_mov_avg.mean(axis=0).astype('uint8')
+        if self.heatmap_mov_avg is None:
+            # like an RGB image so opencv can easily resize...
+            self.heatmap_mov_avg = np.zeros((resize, resize_w, self.mov_avg_size), dtype='uint8')
+        
+        self.heatmap_mov_avg = cv2.resize(self.heatmap_mov_avg,
+                                            (resize_w, resize),cv2.INTER_AREA)
+        heatmap_resized = cv2.resize(heatmap,
+                                     (self.heatmap_mov_avg.shape[1],self.heatmap_mov_avg.shape[0]),cv2.INTER_AREA)
+        
+        self.heatmap_mov_avg[...,self.mov_avg_counter] = heatmap_resized
+        heatmap_resized = self.heatmap_mov_avg.mean(axis=2).astype('uint8')
         if self.mov_avg_counter < (self.mov_avg_size-1):
             self.mov_avg_counter += 1
         else:
             self.mov_avg_counter = 0
-
-        # TODO: change heatmap_resized according to the altitude
 
         heatmap_center = heatmap_resized.shape[0]/2, heatmap_resized.shape[1]/2
         # descending order, best landing candidates
@@ -237,7 +207,6 @@ class TwistPublisher(Node):
         self.get_logger().warn(f'Publishing resized heatmap image at {self.heatmap_topic}')
         img_msg = self.cv_bridge.cv2_to_imgmsg(heatmap_resized, encoding='mono8')
         self.heatmap_pub.publish(img_msg)
-
         return x,y
 
 
@@ -258,25 +227,34 @@ class TwistPublisher(Node):
         
         x = y = z = 0.0
         if not self.landing_done:
-            xd_err,yd_err,mean_depth_under_drone = self.error_from_depth_clusters(depthmsg)
+            depth_std, depth_mean = self.depth_proj(depthmsg, altitude)
 
             xs_err = ys_err = 0.0
             prompts = ["building", "tree", "road", "water", "transmission lines", "lamp post", "vehicle", "people"]
-            if altitude <= self.min_altitude_semantics:
+            if altitude < self.safe_altitude:
+                self.get_logger().info(f"Safe altitude reached!")    
                 prompts = ["vehicle", "people"]
 
             xs_err,ys_err = self.error_from_semantics(rgbmsg, altitude, prompts)
             self.get_logger().info(f"Current prompts: {prompts}")
-            self.get_logger().info(f"Segmentation X,Y err: {xs_err:.2f},{ys_err:.2f}, Depth Cluster X,Y err: {xd_err:.2f},{yd_err:.2f}")
-            self.get_logger().info(f"Mean depth under drone: {mean_depth_under_drone:.2f}, Altitude: {altitude:.2f}")
+            self.get_logger().info(f"Segmentation X,Y err: {xs_err:.2f},{ys_err:.2f}, Depth std, mean: {depth_std:.2f},{depth_mean:.2f}")
+            self.get_logger().info(f"Altitude: {altitude:.2f}")
             
-            x = xs_err + xd_err*DEPTH_XYERR_GAIN
-            y = ys_err + yd_err*DEPTH_XYERR_GAIN
+            x = xs_err
+            y = ys_err
 
             x = x if abs(x) > EPS else 0.0
             y = y if abs(y) > EPS else 0.0
 
-            z = -self.z_speed if (abs(x)+abs(y))==0.0 else 0.0
+            if altitude >= self.safe_altitude:
+                z = -self.z_speed if (abs(x)+abs(y))==0.0 else 0.0
+                self.giveup_timer = 0
+            else:
+                if (abs(x)+abs(y))==0.0 and depth_std < self.depth_smoothness and self.giveup_timer < GIVEUPAT:
+                    z = -self.z_speed
+                else:
+                    z = self.z_speed
+                    self.giveup_timer += 1
 
 
         if altitude<self.altitude_landed:
