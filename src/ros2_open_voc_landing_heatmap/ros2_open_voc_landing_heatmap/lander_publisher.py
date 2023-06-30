@@ -273,15 +273,16 @@ class TwistPublisher(Node):
                 if (abs(x)+abs(y)) == 0.0 and \
                    (depth_std < self.depth_smoothness) and \
                    (time_since_giveup <= self.giveup_after_sec):
+                    self.giveup_timer = 0 # things look fine, reset give up timer
                     z = -self.z_speed
                 else:
                     if self.giveup_timer == 0:
                         self.giveup_timer = self.get_clock().now().nanoseconds/1E9
                     z = self.z_speed
+                x = y = 0.0 # below safe altitude, no movements allowed on XY
 
 
         if altitude<self.altitude_landed:
-            x = y = z = 0.0
             self.landing_done = True
             self.shutdown_after_landed()
 
