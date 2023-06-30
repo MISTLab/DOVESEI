@@ -33,7 +33,8 @@ PROMPTS_SEARCHING = ["building", "tree", "road", "water", "transmission lines", 
 PROMPTS_DESCENDING = ["vehicle", "people"]
 EPS = 0.001
 MAX_SEG_HEIGHT = 17 # helps filtering noise
-XY_RANDOM_SEARCH_TIME = 30
+XY_GIVEUP_SEARCH_TIME = 60
+RANDOM_GIVEUP_SEARCH = False
 class TwistPublisher(Node):
 
     def __init__(self):
@@ -83,9 +84,9 @@ class TwistPublisher(Node):
 
         self.giveup_timer = 0
 
-        self.random_search_timer = 0
+        self.giveup_search_timer = 0
 
-        self.random_xy_search = np.random.rand(2)
+        self.giveup_xy_search = (0,0)
 
         self.cli = self.create_client(GetLandingHeatmap, 'generate_landing_heatmap',
                                       callback_group=ReentrantCallbackGroup())
@@ -213,15 +214,14 @@ class TwistPublisher(Node):
 
         heatmap_center = heatmap_resized.shape[0]/2, heatmap_resized.shape[1]/2
         # descending order, best landing candidates
-        x_idx, y_idx = np.dstack(np.unravel_index(np.argsort(heatmap_resized.ravel()), heatmap_resized.shape))[0][::-1][0]
-
-        x = (-(x_idx - int(heatmap_center[0]))) / heatmap_center[0]
-        y = (y_idx - int(heatmap_center[1])) / heatmap_center[1]
+        xy_idx = np.dstack(np.unravel_index(np.argsort(heatmap_resized.ravel()), heatmap_resized.shape))[0][::-1].astype('float16')
+        xy_idx[:,0] =  (-(xy_idx[:,0] - int(heatmap_center[0]))) / heatmap_center[0]
+        xy_idx[:,1] = (xy_idx[:,1] - int(heatmap_center[1])) / heatmap_center[1]
 
         self.get_logger().debug(f'Publishing resized heatmap image at {self.heatmap_topic}')
         img_msg = self.cv_bridge.cv2_to_imgmsg(heatmap_resized, encoding='mono8')
         self.heatmap_pub.publish(img_msg)
-        return x,y
+        return xy_idx
 
 
     def get_rangefinder(self):
@@ -259,11 +259,13 @@ class TwistPublisher(Node):
 
             xs_err = ys_err = 0.0
             prompts = PROMPTS_SEARCHING
-            if altitude < self.safe_altitude:
+            if altitude < self.safe_altitude*0.8: # 0.8 is to give a margin for the heatmap generation
                 self.get_logger().warn(f"Safe altitude breached, no movements allowed on XY!")    
                 prompts = PROMPTS_DESCENDING
 
-            xs_err,ys_err = self.error_from_semantics(rgbmsg, altitude, prompts)
+            xy_err = self.error_from_semantics(rgbmsg, altitude, prompts)
+            xs_err = xy_err[0,0]
+            ys_err = xy_err[0,1]
             self.get_logger().info(f"Current prompts: {prompts}")
             self.get_logger().info(f"Segmentation X,Y err: {xs_err:.2f},{ys_err:.2f}, Depth std, min: {depth_std:.2f},{depth_min:.2f}")
             
@@ -282,16 +284,23 @@ class TwistPublisher(Node):
 
             if altitude >= self.safe_altitude:
                 if give_up_landing_here:
-                    x,y = self.random_xy_search
-                    if self.random_search_timer==0:
-                        self.random_search_timer = self.get_clock().now().nanoseconds/1E9
-                    random_search_time_passed = (self.get_clock().now().nanoseconds/1E9 - self.random_search_timer)
-                    if random_search_time_passed > XY_RANDOM_SEARCH_TIME:
+                    if self.giveup_search_timer==0:
+                        if RANDOM_GIVEUP_SEARCH:
+                            self.giveup_xy_search = np.random.rand(2)-1 # uniform random [-0.5,0.5] search direction
+                        else:
+                            # xy_err are already ordered according to the objective function 
+                            # ("emptiness" and distance to the UAV) and their values are normalized in relation to the heatmap.
+                            # Then it filters values at least distant 0.5 from the UAV and gets the first as its search direction.
+                            self.giveup_xy_search = xy_err[(xy_err**2).sum(axis=1) >= 0.5][0] 
+                        self.giveup_search_timer = self.get_clock().now().nanoseconds/1E9
+                    random_search_time_passed = (self.get_clock().now().nanoseconds/1E9 - self.giveup_search_timer)
+                    if random_search_time_passed > XY_GIVEUP_SEARCH_TIME:
                         self.giveup_timer = 0 # safe place, reset giveup_timer
-                        self.random_search_timer = 0
+                        self.giveup_search_timer = 0
                         self.get_logger().error(f"Random search finished!")
                     else:
                         self.get_logger().error(f"Random search is ON ({random_search_time_passed})!")
+                    x,y = self.giveup_xy_search
                 elif zero_xy_error:
                     z = -self.z_speed  
             else:
@@ -302,7 +311,6 @@ class TwistPublisher(Node):
                     if self.giveup_timer == 0:
                         self.giveup_timer = self.get_clock().now().nanoseconds/1E9
                     z = self.z_speed
-                    self.random_xy_search = np.random.rand(2)-1 # -0.5 to 0.5
                 x = y = 0.0 # below safe altitude, no movements allowed on XY
 
 
