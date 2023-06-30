@@ -50,7 +50,7 @@ class TwistPublisher(Node):
         self.declare_parameter('mean_depth_side', 20)
         self.declare_parameter('altitude_landed', 1)
         self.declare_parameter('safe_altitude', 80)
-        self.declare_parameter('safety_radius', 1.0)
+        self.declare_parameter('safety_radius', 2.0)
         self.declare_parameter('giveup_after_sec', 5)
         img_topic = self.get_parameter('img_topic').value
         depth_topic = self.get_parameter('depth_topic').value
@@ -151,7 +151,7 @@ class TwistPublisher(Node):
 
         depth_center = depth.shape[0]//2, depth.shape[1]//2
 
-        safety_radius_pixels = int(2*self.safety_radius/(proj/depth.shape[1]))
+        safety_radius_pixels = int(self.safety_radius/(2*proj/depth.shape[1]))
         mask = np.zeros_like(depth)
         mask = cv2.circle(mask, (depth_center[1],depth_center[0]), safety_radius_pixels, (255,255,255), -1)
         depth = cv2.bitwise_and(depth, mask)
@@ -181,7 +181,7 @@ class TwistPublisher(Node):
         # heatmap[:50,:50] = 255
         # heatmap[-50:,-50:] = 255
 
-        safety_radius_pixels = int(2*self.safety_radius/(proj/heatmap.shape[1]))
+        safety_radius_pixels = int(self.safety_radius/(2*proj/heatmap.shape[1]))
         resize = heatmap.shape[0]//safety_radius_pixels
         resize += 1-(resize % 2) # always odd
         # resize = resize if resize < MAX_SEG_HEIGHT else MAX_SEG_HEIGHT
@@ -265,14 +265,15 @@ class TwistPublisher(Node):
             x = x if abs(x) > EPS else 0.0
             y = y if abs(y) > EPS else 0.0
 
+            zero_xy_error = (abs(x)+abs(y)) == 0.0
+            flat_surface_below = depth_std < self.depth_smoothness
+
             if altitude >= self.safe_altitude:
-                if (abs(x)+abs(y)) == 0.0:
+                if zero_xy_error:
                     z = -self.z_speed  
                 self.giveup_timer = 0 # safe altitude, reset give up timer
             else:
-                if (abs(x)+abs(y)) == 0.0 and \
-                   (depth_std < self.depth_smoothness) and \
-                   (time_since_giveup <= self.giveup_after_sec):
+                if zero_xy_error and flat_surface_below and (time_since_giveup <= self.giveup_after_sec):
                     self.giveup_timer = 0 # things look fine, reset give up timer
                     z = -self.z_speed
                 else:
@@ -289,7 +290,8 @@ class TwistPublisher(Node):
         twist = Twist()
         # The UAV's maximum bank angle is limited to a very small value
         # and this is why such a simple control works.
-        # TODO: improve controller to work with bigger bank angles
+        # Additionally, the assumption is that the maximum speed is very low
+        # otherwise the moving average used in the semantic segmentation will break.
         twist.linear.x = x * self.gain
         twist.linear.y = -y * self.gain
         twist.linear.z = z
