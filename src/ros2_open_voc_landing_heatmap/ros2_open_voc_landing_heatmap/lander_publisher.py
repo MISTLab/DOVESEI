@@ -145,7 +145,7 @@ class TwistPublisher(Node):
 
         depth_center = depth.shape[0]//2, depth.shape[1]//2
 
-        safety_radius_pixels = int(self.safety_radius/(proj/depth.shape[1]))
+        safety_radius_pixels = int(2*self.safety_radius/(proj/depth.shape[1]))
         mask = np.zeros_like(depth)
         mask = cv2.circle(mask, (depth_center[1],depth_center[0]), safety_radius_pixels, (255,255,255), -1)
         depth = cv2.bitwise_and(depth, mask)
@@ -175,7 +175,7 @@ class TwistPublisher(Node):
         # heatmap[:50,:50] = 255
         # heatmap[-50:,-50:] = 255
 
-        safety_radius_pixels = int(self.safety_radius/(proj/heatmap.shape[1]))
+        safety_radius_pixels = int(2*self.safety_radius/(proj/heatmap.shape[1]))
         resize = heatmap.shape[0]//safety_radius_pixels
         resize += 1-(resize % 2) # always odd
         resize_w = int(resize*(heatmap.shape[1]/heatmap.shape[0]))
