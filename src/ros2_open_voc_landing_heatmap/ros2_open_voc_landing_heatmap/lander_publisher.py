@@ -32,7 +32,8 @@ FOV = math.radians(73) #TODO: get this from the camera topic...
 PROMPTS_SEARCHING = ["building", "tree", "road", "water", "transmission lines", "lamp post", "vehicle", "people"]
 PROMPTS_DESCENDING = ["vehicle", "people"]
 EPS = 0.001
-# MAX_SEG_HEIGHT = 17 # helps filtering noise
+MAX_SEG_HEIGHT = 17 # helps filtering noise
+XY_RANDOM_SEARCH_TIME = 30
 class TwistPublisher(Node):
 
     def __init__(self):
@@ -42,16 +43,17 @@ class TwistPublisher(Node):
         self.declare_parameter('heatmap_topic', '/heatmap')
         self.declare_parameter('depth_proj_topic', '/depth_proj')
         self.declare_parameter('twist_topic', '/quadctrl/flying_sensor/ctrl_twist_sp')
-        self.declare_parameter('mov_avg_size', 10)
+        self.declare_parameter('mov_avg_size', 20)
         self.declare_parameter('gain', 20)
         self.declare_parameter('z_speed', 1.0)
         self.declare_parameter('depth_new_size', 100)
         self.declare_parameter('depth_smoothness', 0.2)
         self.declare_parameter('mean_depth_side', 20)
         self.declare_parameter('altitude_landed', 1)
-        self.declare_parameter('safe_altitude', 80)
+        self.declare_parameter('safe_altitude', 50)
         self.declare_parameter('safety_radius', 2.0)
         self.declare_parameter('giveup_after_sec', 5)
+        self.declare_parameter('max_depth_sensing', 20)
         img_topic = self.get_parameter('img_topic').value
         depth_topic = self.get_parameter('depth_topic').value
         self.heatmap_topic = self.get_parameter('heatmap_topic').value
@@ -67,6 +69,7 @@ class TwistPublisher(Node):
         self.safe_altitude = self.get_parameter('safe_altitude').value
         self.safety_radius = self.get_parameter('safety_radius').value
         self.giveup_after_sec = self.get_parameter('giveup_after_sec').value
+        self.max_depth_sensing = self.get_parameter('max_depth_sensing').value
         
 
         
@@ -79,6 +82,10 @@ class TwistPublisher(Node):
         self.landing_done = False
 
         self.giveup_timer = 0
+
+        self.random_search_timer = 0
+
+        self.random_xy_search = np.random.rand(2)
 
         self.cli = self.create_client(GetLandingHeatmap, 'generate_landing_heatmap',
                                       callback_group=ReentrantCallbackGroup())
@@ -153,12 +160,12 @@ class TwistPublisher(Node):
 
         safety_radius_pixels = int(self.safety_radius/(2*proj/depth.shape[1]))
         mask = np.zeros_like(depth)
-        mask = cv2.circle(mask, (depth_center[1],depth_center[0]), safety_radius_pixels, (255,255,255), -1)
-        depth = cv2.bitwise_and(depth, mask)
+        mask = cv2.circle(mask, (depth_center[1],depth_center[0]), safety_radius_pixels, 255, -1)
+        depth[mask!=255] = 0
         
         img_msg = self.cv_bridge.cv2_to_imgmsg(depth.astype('uint8'), encoding='mono8')
         self.depth_proj_pub.publish(img_msg)
-        return depth[depth>0].std(),depth[depth>0].mean()
+        return depth[depth>0].std(),depth[depth>0].min()
 
 
 
@@ -184,7 +191,7 @@ class TwistPublisher(Node):
         safety_radius_pixels = int(self.safety_radius/(2*proj/heatmap.shape[1]))
         resize = heatmap.shape[0]//safety_radius_pixels
         resize += 1-(resize % 2) # always odd
-        # resize = resize if resize < MAX_SEG_HEIGHT else MAX_SEG_HEIGHT
+        resize = resize if resize < MAX_SEG_HEIGHT else MAX_SEG_HEIGHT
         resize_w = int(resize*(heatmap.shape[1]/heatmap.shape[0]))
         resize_w = resize_w + 1-(resize_w % 2) # always odd
 
@@ -231,12 +238,15 @@ class TwistPublisher(Node):
 
 
     def sense_and_act(self, rgbmsg, depthmsg):
+        # Beware: spaghetti-code state machine below!
         self.get_logger().debug(f'New data received!')
 
         altitude = self.get_rangefinder()
         if altitude is None:
             return
         
+        self.get_logger().info(f"Altitude: {altitude:.2f}")
+
         if self.giveup_timer == 0:
             time_since_giveup = 0
         else:
@@ -245,7 +255,7 @@ class TwistPublisher(Node):
 
         x = y = z = 0.0
         if not self.landing_done:
-            depth_std, depth_mean = self.depth_proj(depthmsg, altitude)
+            depth_std, depth_min = self.depth_proj(depthmsg, altitude, max_dist=self.max_depth_sensing)
 
             xs_err = ys_err = 0.0
             prompts = PROMPTS_SEARCHING
@@ -255,8 +265,7 @@ class TwistPublisher(Node):
 
             xs_err,ys_err = self.error_from_semantics(rgbmsg, altitude, prompts)
             self.get_logger().info(f"Current prompts: {prompts}")
-            self.get_logger().info(f"Segmentation X,Y err: {xs_err:.2f},{ys_err:.2f}, Depth std, mean: {depth_std:.2f},{depth_mean:.2f}")
-            self.get_logger().info(f"Altitude: {altitude:.2f}")
+            self.get_logger().info(f"Segmentation X,Y err: {xs_err:.2f},{ys_err:.2f}, Depth std, min: {depth_std:.2f},{depth_min:.2f}")
             
             x = xs_err
             y = ys_err
@@ -267,19 +276,33 @@ class TwistPublisher(Node):
 
             zero_xy_error = (abs(x)+abs(y)) == 0.0
             flat_surface_below = depth_std < self.depth_smoothness
+            no_collisions_ahead = (depth_min == self.max_depth_sensing) or (depth_min - altitude) < self.depth_smoothness
+            give_up_landing_here = (time_since_giveup > self.giveup_after_sec)
+            self.get_logger().info(f"zero_xy_error: {zero_xy_error}, flat_surface_below: {flat_surface_below}, no_collisions_ahead: {no_collisions_ahead}, give_up_landing_here: {give_up_landing_here}")
 
             if altitude >= self.safe_altitude:
-                if zero_xy_error:
+                if give_up_landing_here:
+                    x,y = self.random_xy_search
+                    if self.random_search_timer==0:
+                        self.random_search_timer = self.get_clock().now().nanoseconds/1E9
+                    random_search_time_passed = (self.get_clock().now().nanoseconds/1E9 - self.random_search_timer)
+                    if random_search_time_passed > XY_RANDOM_SEARCH_TIME:
+                        self.giveup_timer = 0 # safe place, reset giveup_timer
+                        self.random_search_timer = 0
+                        self.get_logger().error(f"Random search finished!")
+                    else:
+                        self.get_logger().error(f"Random search is ON ({random_search_time_passed})!")
+                elif zero_xy_error:
                     z = -self.z_speed  
-                self.giveup_timer = 0 # safe altitude, reset give up timer
             else:
-                if zero_xy_error and flat_surface_below and (time_since_giveup <= self.giveup_after_sec):
+                if zero_xy_error and flat_surface_below and no_collisions_ahead and not give_up_landing_here:
                     self.giveup_timer = 0 # things look fine, reset give up timer
                     z = -self.z_speed
                 else:
                     if self.giveup_timer == 0:
                         self.giveup_timer = self.get_clock().now().nanoseconds/1E9
                     z = self.z_speed
+                    self.random_xy_search = np.random.rand(2)-1 # -0.5 to 0.5
                 x = y = 0.0 # below safe altitude, no movements allowed on XY
 
 
