@@ -99,7 +99,7 @@ class GenerateLandingHeatmap(Node):
         # and convert to a grayscale image (0 to 255)
         logits = (logits*255).astype('uint8')
 
-        # TODO: implement some logit to decide this...
+        # TODO: implement some logic to decide this...
         response.success = True
         
         # returns heatmap as grayscale image

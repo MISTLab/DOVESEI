@@ -27,14 +27,14 @@ from message_filters import ApproximateTimeSynchronizer, Subscriber
 from cv_bridge import CvBridge
 
 
+# We use the same FOV from the camera in the stereo pair for the 
+# semantic sementation because the second doesn't need a precise projection
 FOV = math.radians(73) #TODO: get this from the camera topic...
 
 PROMPTS_SEARCHING = ["building", "tree", "road", "water", "transmission lines", "lamp post", "vehicle", "people"]
 PROMPTS_DESCENDING = ["vehicle", "people"]
 EPS = 0.001
 MAX_SEG_HEIGHT = 17 # helps filtering noise
-XY_GIVEUP_SEARCH_TIME = 60
-RANDOM_GIVEUP_SEARCH = False
 class TwistPublisher(Node):
 
     def __init__(self):
@@ -55,6 +55,9 @@ class TwistPublisher(Node):
         self.declare_parameter('safety_radius', 2.0)
         self.declare_parameter('giveup_after_sec', 5)
         self.declare_parameter('max_depth_sensing', 20)
+        self.declare_parameter('use_random_giveup_search', False)
+        self.declare_parameter('heatmap_mask_erosion', 7)
+        self.declare_parameter('search4new_place_max_time', 60)
         img_topic = self.get_parameter('img_topic').value
         depth_topic = self.get_parameter('depth_topic').value
         self.heatmap_topic = self.get_parameter('heatmap_topic').value
@@ -71,6 +74,9 @@ class TwistPublisher(Node):
         self.safety_radius = self.get_parameter('safety_radius').value
         self.giveup_after_sec = self.get_parameter('giveup_after_sec').value
         self.max_depth_sensing = self.get_parameter('max_depth_sensing').value
+        self.use_random_giveup_search = self.get_parameter('use_random_giveup_search').value
+        self.heatmap_mask_erosion = self.get_parameter('heatmap_mask_erosion').value
+        self.search4new_place_max_time = self.get_parameter('search4new_place_max_time').value
         
 
         
@@ -82,11 +88,11 @@ class TwistPublisher(Node):
 
         self.landing_done = False
 
-        self.giveup_timer = 0
+        self.giveup_landing_timer = 0
 
-        self.giveup_search_timer = 0
+        self.search4new_place_timer = 0
 
-        self.giveup_xy_search = (0,0)
+        self.search4new_place_direction = (0,0)
 
         self.cli = self.create_client(GetLandingHeatmap, 'generate_landing_heatmap',
                                       callback_group=ReentrantCallbackGroup())
@@ -94,10 +100,6 @@ class TwistPublisher(Node):
             self.get_logger().warn('generate_landing_heatmap service not available, waiting again...')
         self.req = GetLandingHeatmap.Request()
         self.cv_bridge = CvBridge()
-
-        # # QoS profile that will only keep the last message
-        # # qos_prof = QoSProfile(history=QoSHistoryPolicy.KEEP_LAST, depth=1, reliability=QoSReliabilityPolicy.BEST_EFFORT)
-        # qos_prof = QoSProfile(history=QoSHistoryPolicy.KEEP_LAST, depth=1)
                 
         self.twist_pub = self.create_publisher(Twist, self.twist_topic,1)
         self.heatmap_pub = self.create_publisher(ImageMsg, self.heatmap_topic,1)
@@ -108,7 +110,7 @@ class TwistPublisher(Node):
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
         queue_size = 2
-        delay_btw_msgs = 0.02
+        delay_btw_msgs = 0.02 #TODO: test if this value is causing any problems...
         tss = ApproximateTimeSynchronizer(
             [Subscriber(self, ImageMsg, img_topic),
              Subscriber(self, ImageMsg, depth_topic)],
@@ -122,6 +124,9 @@ class TwistPublisher(Node):
 
 
     def get_tf(self, t=0.0, timeout=1.0, map_frame="map", target_frame="flying_sensor"):
+        """Only needed to grab the altitude so we can simulate 
+        the altitude estimation received from a real flight controller
+        """
         try:
             now = Time(nanoseconds=t)
             trans = self.tf_buffer.lookup_transform(map_frame, target_frame,
@@ -147,18 +152,25 @@ class TwistPublisher(Node):
 
 
     def depth_proj(self, depthmsg, altitude, max_dist=20):
+        """Masks the depth image received leaving only a circle
+        that approximates the UAV's safety radius projected according 
+        to its current altitude
+        """
         proj = math.tan(FOV/2)*altitude
 
         depth = self.cv_bridge.imgmsg_to_cv2(depthmsg, desired_encoding='passthrough')
         depth = np.asarray(cv2.resize(depth, 
                                       (int(self.depth_new_size*depth.shape[1]/depth.shape[0]),self.depth_new_size),
                                       cv2.INTER_AREA))
-        # In CARLA the depth goes up to 1000m, but we want up to 20m
+        # In CARLA the depth goes up to 1000m, but we want 
+        # any value bigger than max_dist to become max_dist
         depth[depth>max_dist] = np.nan
         depth[np.isnan(depth)] = max_dist
 
         depth_center = depth.shape[0]//2, depth.shape[1]//2
 
+        # self.safety_radius and proj are in metres
+        # depth.shape[1] is in px
         safety_radius_pixels = int(self.safety_radius/(2*proj/depth.shape[1]))
         mask = np.zeros_like(depth)
         mask = cv2.circle(mask, (depth_center[1],depth_center[0]), safety_radius_pixels, 255, -1)
@@ -171,11 +183,14 @@ class TwistPublisher(Node):
 
 
     def error_from_semantics(self, rgbmsg, altitude, prompts):
+        """Normalized XY error according to the best place to land defined by the heatmap
+        received from the generate_landing_heatmap service
+        The heatmap received will be a mono8 image where the higher the value 
+        the better the place for landing.
+        """
         proj = math.tan(FOV/2)*altitude
         self.get_logger().debug(f'Sending heatmap service request...')
-        response = self.get_heatmap(rgbmsg, 
-                                    prompts,
-                                    7)
+        response = self.get_heatmap(rgbmsg, prompts, erosion_size=self.heatmap_mask_erosion)
         if response is None:
             self.get_logger().error(f'Empty response?!?!')
             return
@@ -189,6 +204,11 @@ class TwistPublisher(Node):
         # heatmap[:50,:50] = 255
         # heatmap[-50:,-50:] = 255
 
+        # Reduce the received heatmap to a size that is approximately proportional
+        # to the projection of the UAV's safety radius, but with these details:
+        # - Always use odd values for height and width to guarantee a pixel at the centre
+        # - Limit the maximum number of pixels according to MAX_SEG_HEIGHT 
+        # to avoid problems with noise in the semantic segmentation
         safety_radius_pixels = int(self.safety_radius/(2*proj/heatmap.shape[1]))
         resize = heatmap.shape[0]//safety_radius_pixels
         resize += 1-(resize % 2) # always odd
@@ -197,15 +217,19 @@ class TwistPublisher(Node):
         resize_w = resize_w + 1-(resize_w % 2) # always odd
 
         if self.heatmap_mov_avg is None:
-            # like an RGB image so opencv can easily resize...
+            # like an RGB image so opencv can easily resize it...
             self.heatmap_mov_avg = np.zeros((resize, resize_w, self.mov_avg_size), dtype='uint8')
         
+        # The resolution of the heatmap changes according to the UAV's safety projection (altitude)
+        # Therefore the array used for the moving average needs to be resized as well
         self.heatmap_mov_avg = cv2.resize(self.heatmap_mov_avg,
                                             (resize_w, resize),cv2.INTER_AREA)
         heatmap_resized = cv2.resize(heatmap,
                                      (self.heatmap_mov_avg.shape[1],self.heatmap_mov_avg.shape[0]),cv2.INTER_AREA)
         
+        # Add the received heatmap to the moving average array
         self.heatmap_mov_avg[...,self.mov_avg_counter] = heatmap_resized
+        # Calculates the average heatmap according to the values stored in the moving average array
         heatmap_resized = self.heatmap_mov_avg.mean(axis=2).astype('uint8')
         if self.mov_avg_counter < (self.mov_avg_size-1):
             self.mov_avg_counter += 1
@@ -213,8 +237,11 @@ class TwistPublisher(Node):
             self.mov_avg_counter = 0
 
         heatmap_center = heatmap_resized.shape[0]/2, heatmap_resized.shape[1]/2
-        # descending order, best landing candidates
+        # The heatmap values are higher for better places (pixels) to land, 
+        # but argsort will give, by default, values in ascending order.
+        # Descending order, best landing candidates (image coordinates, 0,0 at the top left)
         xy_idx = np.dstack(np.unravel_index(np.argsort(heatmap_resized.ravel()), heatmap_resized.shape))[0][::-1].astype('float16')
+        # Change from image coordinates to normalized coordinates in relation to the centre of the image
         xy_idx[:,0] =  (-(xy_idx[:,0] - int(heatmap_center[0]))) / heatmap_center[0]
         xy_idx[:,1] = (xy_idx[:,1] - int(heatmap_center[1])) / heatmap_center[1]
 
@@ -224,7 +251,9 @@ class TwistPublisher(Node):
         return xy_idx
 
 
-    def get_rangefinder(self):
+    def get_altitude(self):
+        """Simulate the altitude read from the flight controller internal estimation
+        """
         res = self.get_tf()
         if res is None:
             return None
@@ -241,27 +270,29 @@ class TwistPublisher(Node):
         # Beware: spaghetti-code state machine below!
         self.get_logger().debug(f'New data received!')
 
-        altitude = self.get_rangefinder()
+        altitude = self.get_altitude()
         if altitude is None:
             return
         
         self.get_logger().info(f"Altitude: {altitude:.2f}")
 
-        if self.giveup_timer == 0:
-            time_since_giveup = 0
+        if self.giveup_landing_timer == 0:
+            time_since_giveup_landing = 0
         else:
-            time_since_giveup = (self.get_clock().now().nanoseconds/1E9 - self.giveup_timer)
-            self.get_logger().warn(f"Time since giveup_timer enabled: {time_since_giveup}")
+            time_since_giveup_landing = (self.get_clock().now().nanoseconds/1E9 - self.giveup_landing_timer)
+            self.get_logger().warn(f"Time since giveup_landing_timer enabled: {time_since_giveup_landing}")
 
         x = y = z = 0.0
         if not self.landing_done:
             depth_std, depth_min = self.depth_proj(depthmsg, altitude, max_dist=self.max_depth_sensing)
 
             xs_err = ys_err = 0.0
+            # We have two sets of prompts used to generate the landing heatmap
+            # One set (PROMPTS_SEARCHING) is used when the UAV is flying above any obstacle (safety information previously known)
+            # and it's searching for a place to land
             prompts = PROMPTS_SEARCHING
-            if altitude < self.safe_altitude*0.8: # 0.8 is to give a margin for the heatmap generation
-                self.get_logger().warn(f"Safe altitude breached, no movements allowed on XY!")    
-                prompts = PROMPTS_DESCENDING
+            if altitude < self.safe_altitude*0.8: # 0.8 is to give a margin for the heatmap generation (moving average)
+                prompts = PROMPTS_DESCENDING      #TODO: fix this hack...
 
             xy_err = self.error_from_semantics(rgbmsg, altitude, prompts)
             xs_err = xy_err[0,0]
@@ -278,38 +309,49 @@ class TwistPublisher(Node):
 
             zero_xy_error = (abs(x)+abs(y)) == 0.0
             flat_surface_below = depth_std < self.depth_smoothness
+            # TODO: improve the no_collisions_ahead definition
             no_collisions_ahead = (depth_min == self.max_depth_sensing) or (depth_min - altitude) < self.depth_smoothness
-            give_up_landing_here = (time_since_giveup > self.giveup_after_sec)
+            give_up_landing_here = (time_since_giveup_landing > self.giveup_after_sec)
             self.get_logger().info(f"zero_xy_error: {zero_xy_error}, flat_surface_below: {flat_surface_below}, no_collisions_ahead: {no_collisions_ahead}, give_up_landing_here: {give_up_landing_here}")
 
+            # altitude >= self.safe_altitude means the UAV is flying high enough and there are no obstacles to worry about
             if altitude >= self.safe_altitude:
                 if give_up_landing_here:
-                    if self.giveup_search_timer==0:
-                        if RANDOM_GIVEUP_SEARCH:
-                            self.giveup_xy_search = np.random.rand(2)-1 # uniform random [-0.5,0.5] search direction
+                    if self.search4new_place_timer==0:
+                        # it will get a direction, random or based on the current heatmap, and move towards that
+                        # direction for self.search4new_place_max_time seconds trying to find a new place to start looking
+                        # for a place to land again (therefore avoiding getting stuck to current spot)
+                        if self.use_random_giveup_search:
+                            self.search4new_place_direction = np.random.rand(2)-1 # uniform random [-0.5,0.5] search direction
                         else:
                             # xy_err are already ordered according to the objective function 
                             # ("emptiness" and distance to the UAV) and their values are normalized in relation to the heatmap.
-                            # Then it filters values at least distant 0.5 from the UAV and gets the first as its search direction.
-                            self.giveup_xy_search = xy_err[(xy_err**2).sum(axis=1) >= 0.5][0] 
-                        self.giveup_search_timer = self.get_clock().now().nanoseconds/1E9
-                    random_search_time_passed = (self.get_clock().now().nanoseconds/1E9 - self.giveup_search_timer)
-                    if random_search_time_passed > XY_GIVEUP_SEARCH_TIME:
-                        self.giveup_timer = 0 # safe place, reset giveup_timer
-                        self.giveup_search_timer = 0
-                        self.get_logger().error(f"Random search finished!")
+                            # Then it filters values at least distant 0.5 (normalized value) from the UAV and gets the first as its search direction.
+                            self.search4new_place_direction = xy_err[(xy_err**2).sum(axis=1) >= 0.5][0] 
+                        self.search4new_place_timer = self.get_clock().now().nanoseconds/1E9
+                    search4new_place_time_passed = (self.get_clock().now().nanoseconds/1E9 - self.search4new_place_timer)
+                    if search4new_place_time_passed > self.search4new_place_max_time:
+                        self.giveup_landing_timer = 0 # safe place, reset giveup_landing_timer
+                        self.search4new_place_timer = 0
+                        self.get_logger().error(f"Search 4 new place finished!")
                     else:
-                        self.get_logger().error(f"Random search is ON ({random_search_time_passed})!")
-                    x,y = self.giveup_xy_search
+                        self.get_logger().error(f"Search 4 new place is ON ({search4new_place_time_passed})!")
+                    x,y = self.search4new_place_direction
                 elif zero_xy_error:
                     z = -self.z_speed  
             else:
+                self.get_logger().warn(f"Safe altitude breached, no movements allowed on XY!")
+                # giveup_landing_timer helps filtering noisy decisions as the UAV will only give up landing 
+                # on the current spot after one of the triggers consistently flags a bad place for
+                # at least self.giveup_after_sec seconds
                 if zero_xy_error and flat_surface_below and no_collisions_ahead and not give_up_landing_here:
-                    self.giveup_timer = 0 # things look fine, reset give up timer
+                    self.giveup_landing_timer = 0 # things look fine, reset give up timer
                     z = -self.z_speed
                 else:
-                    if self.giveup_timer == 0:
-                        self.giveup_timer = self.get_clock().now().nanoseconds/1E9
+                    # something doesn't look good, start giveup_landing_timer if it was not already started
+                    if self.giveup_landing_timer == 0:
+                        self.giveup_landing_timer = self.get_clock().now().nanoseconds/1E9
+                    # since things don't look good, stop descending and start ascending
                     z = self.z_speed
                 x = y = 0.0 # below safe altitude, no movements allowed on XY
 
@@ -338,6 +380,8 @@ class TwistPublisher(Node):
         
 
     def get_heatmap(self, image_msg, prompts, erosion_size):
+        #TODO: research a solution and fix service callback hack (I think Galactic is the problem... but I am not sure)
+
         #request.image, request.prompts, request.erosion_size
         self.req.image = image_msg
         # the service expects a string of prompts separated by ';'
