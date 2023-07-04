@@ -25,7 +25,7 @@ class GenerateLandingHeatmap(Node):
     def __init__(self):
         super().__init__('generate_landing_heatmap')
         self.declare_parameter('safety_threshold', 0.8)
-        self.declare_parameter('model_calib_cte', 40)
+        self.declare_parameter('model_calib_cte', 40.0)
         self.declare_parameter('blur_kernel_size', 15)
         #self.add_on_set_parameters_callback(self.parameters_callback)
 

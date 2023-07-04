@@ -49,13 +49,12 @@ class TwistPublisher(Node):
         self.declare_parameter('z_speed', 1.0)
         self.declare_parameter('depth_new_size', 100)
         self.declare_parameter('depth_smoothness', 0.2)
-        self.declare_parameter('mean_depth_side', 20)
         self.declare_parameter('altitude_landed', 1)
         self.declare_parameter('safe_altitude', 50)
         self.declare_parameter('safety_radius', 2.0)
         self.declare_parameter('giveup_after_sec', 5)
         self.declare_parameter('max_depth_sensing', 20)
-        self.declare_parameter('use_random_giveup_search', False)
+        self.declare_parameter('use_random_search4new_place', False)
         self.declare_parameter('heatmap_mask_erosion', 7)
         self.declare_parameter('search4new_place_max_time', 60)
         img_topic = self.get_parameter('img_topic').value
@@ -68,13 +67,12 @@ class TwistPublisher(Node):
         self.z_speed = self.get_parameter('z_speed').value
         self.depth_new_size = self.get_parameter('depth_new_size').value
         self.depth_smoothness = self.get_parameter('depth_smoothness').value
-        self.mean_depth_side = self.get_parameter('mean_depth_side').value
         self.altitude_landed = self.get_parameter('altitude_landed').value
         self.safe_altitude = self.get_parameter('safe_altitude').value
         self.safety_radius = self.get_parameter('safety_radius').value
         self.giveup_after_sec = self.get_parameter('giveup_after_sec').value
         self.max_depth_sensing = self.get_parameter('max_depth_sensing').value
-        self.use_random_giveup_search = self.get_parameter('use_random_giveup_search').value
+        self.use_random_search4new_place = self.get_parameter('use_random_search4new_place').value
         self.heatmap_mask_erosion = self.get_parameter('heatmap_mask_erosion').value
         self.search4new_place_max_time = self.get_parameter('search4new_place_max_time').value
         
@@ -253,6 +251,7 @@ class TwistPublisher(Node):
 
     def get_altitude(self):
         """Simulate the altitude read from the flight controller internal estimation
+        TODO: a real UAV may use AGL (rangefinder), MSL (barometer) or a mixture
         """
         res = self.get_tf()
         if res is None:
@@ -308,6 +307,7 @@ class TwistPublisher(Node):
             y = y if abs(y) > EPS else 0.0
 
             zero_xy_error = (abs(x)+abs(y)) == 0.0
+            # TODO: improve the flat_surface_below definition
             flat_surface_below = depth_std < self.depth_smoothness
             # TODO: improve the no_collisions_ahead definition
             no_collisions_ahead = (depth_min == self.max_depth_sensing) or (depth_min - altitude) < self.depth_smoothness
@@ -321,7 +321,7 @@ class TwistPublisher(Node):
                         # it will get a direction, random or based on the current heatmap, and move towards that
                         # direction for self.search4new_place_max_time seconds trying to find a new place to start looking
                         # for a place to land again (therefore avoiding getting stuck to current spot)
-                        if self.use_random_giveup_search:
+                        if self.use_random_search4new_place:
                             self.search4new_place_direction = np.random.rand(2)-1 # uniform random [-0.5,0.5] search direction
                         else:
                             # xy_err are already ordered according to the objective function 
