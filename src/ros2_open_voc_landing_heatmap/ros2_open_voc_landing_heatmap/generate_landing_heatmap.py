@@ -1,7 +1,8 @@
 from time import sleep
 import numpy as np
 import cv2
-from PIL import Image
+# from PIL import Image
+#from sensor_msgs.msg import Image as ImageMsg ##DEBUG
 
 import torch
 from transformers import CLIPSegProcessor, CLIPSegForImageSegmentation
@@ -47,6 +48,8 @@ class GenerateLandingHeatmap(Node):
             self.final_dists[j,k] = dists[i]
 
         self.cv_bridge = CvBridge()
+
+        # self.debug_img_pub = self.create_publisher(ImageMsg, "/debug_imgs",1) ##DEBUG
 
         self.srv = self.create_service(GetLandingHeatmap, 'generate_landing_heatmap', self.get_landing_heatmap_callback)
         if torch.cuda.is_available(): self.get_logger().warn('generate_landing_heatmap is using cuda!')
@@ -95,6 +98,10 @@ class GenerateLandingHeatmap(Node):
 
         # Finally, resize to match input image (CLIPSeg resizes without keeping the proportions)
         logits = cv2.resize(logits, (input_image.shape[1],input_image.shape[0]), cv2.INTER_AREA)
+
+        # debug_img = (logits*255).astype('uint8') ##DEBUG
+        # img_msg = self.cv_bridge.cv2_to_imgmsg(debug_img, encoding='mono8')##DEBUG
+        # self.debug_img_pub.publish(img_msg)##DEBUG
 
         # and convert to a grayscale image (0 to 255)
         logits = (logits*255).astype('uint8')
