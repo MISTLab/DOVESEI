@@ -39,6 +39,7 @@ ros2 run ros2_open_voc_landing_heatmap lander_publisher --ros-args -p mov_avg_si
 ```
 Important parameters (append `--ros-args -p <parameter_name>:=<parameter_value>`):
 * `mov_avg_size`: number of heatmaps averaged before calculating the direction to move
+* 'gain': gain used on the XY error to define the velocity to move (usually the values get satured by the maximum bank angle, `tiltMax`)
 * `z_speed`: speed setpoint [m/s] that the UAV will move in the z direction
 * `depth_smoothness`: value used to control the smoothness of the surface 
 * `altitude_landed`: altitude considered close enough to the ground to use the flight controller landing procedure
@@ -54,8 +55,27 @@ It's also possible to generate the heatmap using CARLA's semantic segmentation s
 ros2 run ros2_open_voc_landing_heatmap getlandingheatmap_gt_service
 ```
 
+## How it works internally:
+The system has two distinct phases:
+1. Search for a landing spot from a safe altitude
+2. Descending while checking for changes or obstacles
+
+### 1. Search for a landing spot from a safe altitude
+An important assumption at this phase is that the UAV can move in the XY plane freely as there are no obstacles at this altitude in this particular area (e.g. 100m). Thus the system will only use its downfacing RGB sensor to search for a place to land.     
+The captured RGB image is passed through a semantic segmentation model to detect classes that the UAV must avoid. Currently this is done using CLIPSeg and the following prompts: `["building", "tree", "road", "water", "transmission lines", "lamp post", "vehicle", "people"]`. After a softmax layer, the outputs of the model are calibrated (`model_calib_cte`), fused together (maximum values), and inverted to bring free pixels values towards one. Since CLIPSeg is based on visual transformers (ViT), it divides the input image into patches and this causes artifacts to appear in the output. Therefore the fused outputs are smoothed (blur, `blur_kernel_size`). With this smoother result, a mask is generated (`safety_threshold`) and eroded (`heatmap_mask_erosion`) to remove small noisy regions. One of the goals is try to land as close as the current position, therefore a distance gradient is applied on top of the eroded mask giving higher values to free pixels closer to the centre of the image. Finally, the resolution is reduced to fight noise and use less CPU in the next steps:     
+![image](https://github.com/ricardodeazambuja/ros2_open_voc_landing_heatmap/assets/6606382/8da0e4af-cb85-4a4a-87e6-555c64ed8552)
+
+Having the (low resolution) heatmap ready, the system averages a certain number of frames (`mov_avg_size`) before it searches for the brightest pixel. The position of the brightest pixel will define the direction commanded to the UAV to move. The system will stay in this phase until the brightest pixel, therefore the XY error, is below a certain threshold and at that moment it will start descending (`z_speed`) until it breaches the safe altitude (`safe_altitude`) when it switches to the next phase.
+![image](https://github.com/ricardodeazambuja/ros2_open_voc_landing_heatmap/assets/6606382/3d6fe182-318c-4428-ad33-cd4031a4f30b)
+
+### 2. Descending while checking for changes or obstacles
+The descending phase is triggered by the current altitude (`safe_altitude`). At this situation the movements in the XY plane are not allowed anymore and the system checkes for consistent collisions, flatness, or changes in the heatmap. The collisions and flatness check uses the received depth image, but only the region corresponding to the UAV's projection on the ground. To avoid noise, the system only gives up a landing spot after problems are detected consistently for a certain amount of time (`giveup_after_sec`). If the problems persist after `giveup_after_sec`, the UAV will climb again to a safe altitude and search for a new place. When it is searching for a new place, it can use the current heatmap or a random direction (`use_random_search4new_place`), and move towards that direction for the amount of time specified (`search4new_place_max_time`).
+![image](https://github.com/ricardodeazambuja/ros2_open_voc_landing_heatmap/assets/6606382/1df3e9f6-9e8a-4777-aa67-fe7f8f113079)
+The system will activate the flight controller's internal landing procedure when it reaches a certain altitude (`altitude_landed`).
+
 
 ## TODO
-* Improve the code
+* Improve code structure
+* Define better flatness and obstacle detection algorithms (while still keeping the CPU usage low)
 * Fix the service call_async / future / MultiThreadedExecutor mess
 * Write launch files
