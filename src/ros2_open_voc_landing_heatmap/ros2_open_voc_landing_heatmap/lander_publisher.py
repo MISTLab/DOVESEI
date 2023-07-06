@@ -350,7 +350,7 @@ class TwistPublisher(Node):
             # TODO: improve the flat_surface_below definition
             flat_surface_below = depth_std < self.depth_smoothness/self.conservative_gain
             # TODO: improve the no_collisions_ahead definition
-            no_collisions_ahead = (depth_min == self.max_depth_sensing) or (depth_min - altitude) < self.depth_smoothness
+            no_collisions_ahead = depth_min > self.depth_smoothness
             give_up_landing_here = (time_since_giveup_landing > self.giveup_after_sec)
             self.get_logger().info(f"zero_xy_error: {zero_xy_error}, flat_surface_below: {flat_surface_below}, no_collisions_ahead: {no_collisions_ahead}, give_up_landing_here: {give_up_landing_here}")
 
