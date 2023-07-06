@@ -25,12 +25,10 @@ class GenerateLandingHeatmap(Node):
 
     def __init__(self):
         super().__init__('generate_landing_heatmap')
-        self.declare_parameter('safety_threshold', 0.8)
         self.declare_parameter('model_calib_cte', 40.0)
         self.declare_parameter('blur_kernel_size', 15)
         #self.add_on_set_parameters_callback(self.parameters_callback)
 
-        self.safety_threshold = self.get_parameter('safety_threshold').value
         self.model_calib_cte = self.get_parameter('model_calib_cte').value
         self.blur_kernel_size = self.get_parameter('blur_kernel_size').value
 
@@ -64,6 +62,7 @@ class GenerateLandingHeatmap(Node):
         input_image = self.cv_bridge.imgmsg_to_cv2(request.image, desired_encoding='rgb8')
         prompts = request.prompts.split(';')
         erosion_size = request.erosion_size
+        safety_threshold = request.safety_threshold
 
         element = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, 
                                             (2 * erosion_size + 1, 2 * erosion_size + 1),
@@ -89,7 +88,7 @@ class GenerateLandingHeatmap(Node):
         logits = cv2.blur(logits,(self.blur_kernel_size,self.blur_kernel_size))
 
         # Creates a mask of the best places to land
-        logits = (logits>self.safety_threshold).astype('float32')
+        logits = (logits>safety_threshold).astype('float32')
     
         logits = cv2.erode(logits, element)
 

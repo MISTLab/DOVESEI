@@ -51,13 +51,16 @@ class TwistPublisher(Node):
         self.declare_parameter('altitude_landed', 1)
         self.declare_parameter('safe_altitude', 50)
         self.declare_parameter('safety_radius', 2.0)
+        self.declare_parameter('safety_threshold', 0.8)
         self.declare_parameter('giveup_after_sec', 5)
         self.declare_parameter('max_depth_sensing', 20)
         self.declare_parameter('use_random_search4new_place', False)
-        self.declare_parameter('heatmap_mask_erosion', 7)
+        self.declare_parameter('heatmap_mask_erosion', 2)
         self.declare_parameter('search4new_place_max_time', 60)
         self.declare_parameter('max_seg_height', 17)
         self.declare_parameter('zero_error_eps', 0.001)
+        self.declare_parameter('max_landing_time_sec', 5*60)
+        self.declare_parameter('min_conservative_gain', 0.1)
         img_topic = self.get_parameter('img_topic').value
         depth_topic = self.get_parameter('depth_topic').value
         self.heatmap_topic = self.get_parameter('heatmap_topic').value
@@ -71,6 +74,7 @@ class TwistPublisher(Node):
         self.altitude_landed = self.get_parameter('altitude_landed').value
         self.safe_altitude = self.get_parameter('safe_altitude').value
         self.safety_radius = self.get_parameter('safety_radius').value
+        self.safety_threshold = self.get_parameter('safety_threshold').value
         self.giveup_after_sec = self.get_parameter('giveup_after_sec').value
         self.max_depth_sensing = self.get_parameter('max_depth_sensing').value
         self.use_random_search4new_place = self.get_parameter('use_random_search4new_place').value
@@ -78,6 +82,8 @@ class TwistPublisher(Node):
         self.search4new_place_max_time = self.get_parameter('search4new_place_max_time').value
         self.max_seg_height = self.get_parameter('max_seg_height').value
         self.zero_error_eps = self.get_parameter('zero_error_eps').value
+        self.max_landing_time_sec = self.get_parameter('max_landing_time_sec').value
+        self.min_conservative_gain = self.get_parameter('min_conservative_gain').value
         
 
         
@@ -290,6 +296,11 @@ class TwistPublisher(Node):
         # Beware: spaghetti-code state machine below!
         self.get_logger().debug(f'New data received!')
 
+        elapsed_time = self.get_clock().now().nanoseconds/1E9-self.init_time_sec
+        conservative_gain = 1-np.exp(1-self.max_landing_time_sec/elapsed_time)
+        self.conservative_gain = conservative_gain if conservative_gain > self.min_conservative_gain else self.min_conservative_gain
+        self.get_logger().info(f'Elapsed time [s]: {elapsed_time} - Conservative gain: {self.conservative_gain}')
+
         self.lander_base_state = None
         self.lander_sub_state = []
 
@@ -337,7 +348,7 @@ class TwistPublisher(Node):
 
             zero_xy_error = (abs(x)+abs(y)) == 0.0
             # TODO: improve the flat_surface_below definition
-            flat_surface_below = depth_std < self.depth_smoothness
+            flat_surface_below = depth_std < self.depth_smoothness/self.conservative_gain
             # TODO: improve the no_collisions_ahead definition
             no_collisions_ahead = (depth_min == self.max_depth_sensing) or (depth_min - altitude) < self.depth_smoothness
             give_up_landing_here = (time_since_giveup_landing > self.giveup_after_sec)
@@ -423,7 +434,8 @@ class TwistPublisher(Node):
         self.req.image = image_msg
         # the service expects a string of prompts separated by ';'
         self.req.prompts = ";".join(prompts)
-        self.req.erosion_size = int(erosion_size)       
+        self.req.erosion_size = int(erosion_size)
+        self.req.safety_threshold = self.safety_threshold*float(self.conservative_gain)
 
         event = Event()
         def future_done_callback(future):

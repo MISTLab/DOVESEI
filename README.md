@@ -30,7 +30,6 @@ ros2 run ros2_open_voc_landing_heatmap getlandingheatmap_service
 Important parameters (append `--ros-args -p <parameter_name>:=<parameter_value>`):
 * `model_calib_cte`: gain applied to the output of the softmax to calibrate the model (same value used for all prompts)
 * `blur_kernel_size`: size of a square kernel used to smooth the pattern left by the ViT patches
-* `safety_threshold`: threshold used on the fused logits to generate the places for landing mask (before the distance gradient)
 
 
 Launch the node that will publish the twist messages:
@@ -38,6 +37,7 @@ Launch the node that will publish the twist messages:
 ros2 run ros2_open_voc_landing_heatmap lander_publisher --ros-args -p mov_avg_size:=10
 ```
 Important parameters (append `--ros-args -p <parameter_name>:=<parameter_value>`):
+* `safety_threshold`: threshold used on the fused logits to generate the places for landing mask (before the distance gradient)
 * `mov_avg_size`: number of heatmaps averaged before calculating the direction to move
 * 'gain': gain used on the XY error to define the velocity to move (usually the values get satured by the maximum bank angle, `tiltMax`)
 * `z_speed`: speed setpoint [m/s] that the UAV will move in the z direction
@@ -49,6 +49,7 @@ Important parameters (append `--ros-args -p <parameter_name>:=<parameter_value>`
 * `use_random_search4new_place`: selects between a random new direction or calculate using the current heatmap
 * `search4new_place_max_time`: amount of time moving towards a new direction after a failed landing tentative
 * `heatmap_mask_erosion`: amount of pixels eroded on the heatmap mask to fight semantic segmentation noise
+* `max_landing_time_sec`: maximum time expected for the landing (controls how the `safety_threshold` and flatness are reduced as the elapsed time increases)
 
 It's also possible to generate the heatmap using CARLA's semantic segmentation sensor (must be enabled in the [json config file](https://github.com/ricardodeazambuja/ros2_quad_sim_python/blob/24747bb8c7d0cb3f35087b4154da1cfbec49527a/src/ros2_quad_sim_python/cfg/flying_sensor_full.json)) as a way to compare against the open vocabulary one without changing the `lander_publisher` node:
 ```
@@ -71,8 +72,20 @@ Having the (low resolution) heatmap ready, the system averages a certain number 
 ### 2. Descending while checking for changes or obstacles
 The descending phase is triggered by the current altitude (`safe_altitude`). At this situation the movements in the XY plane are not allowed anymore and the system checkes for consistent collisions, flatness, or changes in the heatmap. The collisions and flatness check uses the received depth image, but only the region corresponding to the UAV's projection on the ground. To avoid noise, the system only gives up a landing spot after problems are detected consistently for a certain amount of time (`giveup_after_sec`). If the problems persist after `giveup_after_sec`, the UAV will climb again to a safe altitude and search for a new place. When it is searching for a new place, it can use the current heatmap or a random direction (`use_random_search4new_place`), and move towards that direction for the amount of time specified (`search4new_place_max_time`).
 ![image](https://github.com/ricardodeazambuja/ros2_open_voc_landing_heatmap/assets/6606382/1df3e9f6-9e8a-4777-aa67-fe7f8f113079)
+A conservative gain is calculated based on the elapsed time since the start of the procedure and the 
 The system will activate the flight controller's internal landing procedure when it reaches a certain altitude (`altitude_landed`).
 
+
+## Parameters that can make the system more or less conservative:
+* `zero_error_eps`: used as the threshold for the xy error calculated using the heatmap. Increasing this value will make the system less conservative
+* `max_sem_height`: maximum height resolution of the heatmap. Decreasing this value will fuse more pixels into one, reducing noise
+* `giveup_after_sec`: maximum time of continuous non-zero xy error, flatness and obstacle detection. Increasing this value will make the system less conservative
+* `safety_radius`: radius [m] of the UAV projection on the ground. Decreasing this value will leave more room for errors making the system less conservative
+* `mov_avg_size`: number of heatmap frames averaged. Increasing this value will reduce disruptions by noisy readings
+* `heatmap_mask_erosion`: pixels used to erode the mask generated from the segmentation fused logits. Decreasing this value will make the system less conservative as the high valued areas (places good to land) will expand
+* `depth_smoothness`: depth value [m] for flatness and collision estimations. Increasing this value will make the system less conservative
+* `z_speed`: z speed setpoint. Increasing this value may lead to a less conservative system (it will play a role with the mov_avg_size, though)
+* `max_landing_time_sec`: maximum time expected before landing. Decreasing this value will make the `safety_threshold` and minimum flatness acceptable values decrease faster
 
 ## TODO
 * Improve code structure

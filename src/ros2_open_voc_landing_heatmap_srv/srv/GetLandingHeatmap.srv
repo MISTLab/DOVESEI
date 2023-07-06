@@ -1,6 +1,7 @@
 sensor_msgs/Image image
 string prompts
 int8 erosion_size
+float32 safety_threshold
 ---
 sensor_msgs/Image heatmap
 bool success
