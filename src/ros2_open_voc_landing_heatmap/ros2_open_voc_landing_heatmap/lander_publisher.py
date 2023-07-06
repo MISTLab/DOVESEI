@@ -6,6 +6,7 @@ import cv2
 
 
 from ros2_open_voc_landing_heatmap_srv.srv import GetLandingHeatmap
+from std_msgs.msg import String
 from sensor_msgs.msg import Image as ImageMsg
 from geometry_msgs.msg import Twist
 
@@ -92,6 +93,13 @@ class TwistPublisher(Node):
 
         self.search4new_place_direction = (0,0)
 
+        self.init_time_sec = self.get_clock().now().nanoseconds/1E9
+
+        self.lander_base_state_msgs = ["SEARCHING", "RESTARTING", "LANDED"]
+        self.lander_base_state = None # only one base state is allowed
+        self.lander_sub_state_msgs = ["SAFE_ALTITUDE", "ZERO_XY_ERROR", "FLAT_SURFACE_BELOW", "NO_COLLISIONS_AHEAD"]
+        self.lander_sub_state = [] # multiple sub states
+
         self.cli = self.create_client(GetLandingHeatmap, 'generate_landing_heatmap',
                                       callback_group=ReentrantCallbackGroup())
         while not self.cli.wait_for_service(timeout_sec=1.0):
@@ -102,6 +110,7 @@ class TwistPublisher(Node):
         self.twist_pub = self.create_publisher(Twist, self.twist_topic,1)
         self.heatmap_pub = self.create_publisher(ImageMsg, self.heatmap_topic,1)
         self.depth_proj_pub = self.create_publisher(ImageMsg, self.depth_proj_topic,1)
+        self.state_pub = self.create_publisher(String, 'lander_state', 1)
 
         self.tf_trials = 5
         self.tf_buffer = Buffer()
@@ -119,6 +128,14 @@ class TwistPublisher(Node):
         tss.registerCallback(self.sense_and_act)
 
         self.get_logger().info('Ready to publish some twist messages!')
+
+
+    def publish_state(self):
+        state_msg = String()
+        sub_states = set(self.lander_sub_state)
+        state_msg.data = self.lander_base_state + "-" + "-".join(sub_states) # .split("-") to recover a list
+        self.state_pub.publish(state_msg)
+        self.get_logger().info(f'Current state: {state_msg.data}')
 
 
     def get_tf(self, t=0.0, timeout=1.0, map_frame="map", target_frame="flying_sensor"):
@@ -269,20 +286,28 @@ class TwistPublisher(Node):
         # Beware: spaghetti-code state machine below!
         self.get_logger().debug(f'New data received!')
 
+        self.lander_base_state = None
+        self.lander_sub_state = []
+
         altitude = self.get_altitude()
         if altitude is None:
             return
         
         self.get_logger().info(f"Altitude: {altitude:.2f}")
 
-        if self.giveup_landing_timer == 0:
-            time_since_giveup_landing = 0
-        else:
-            time_since_giveup_landing = (self.get_clock().now().nanoseconds/1E9 - self.giveup_landing_timer)
-            self.get_logger().warn(f"Time since giveup_landing_timer enabled: {time_since_giveup_landing}")
-
         x = y = z = 0.0
-        if not self.landing_done:
+        if altitude<self.altitude_landed:
+            self.landing_done = True
+            self.lander_base_state = "LANDED"
+            self.shutdown_after_landed()
+        else:
+            self.lander_base_state = "SEARCHING"
+            if self.giveup_landing_timer == 0:
+                time_since_giveup_landing = 0
+            else:
+                time_since_giveup_landing = (self.get_clock().now().nanoseconds/1E9 - self.giveup_landing_timer)
+                self.get_logger().warn(f"Time since giveup_landing_timer enabled: {time_since_giveup_landing}")
+
             depth_std, depth_min = self.depth_proj(depthmsg, altitude, max_dist=self.max_depth_sensing)
 
             xs_err = ys_err = 0.0
@@ -316,7 +341,9 @@ class TwistPublisher(Node):
 
             # altitude >= self.safe_altitude means the UAV is flying high enough and there are no obstacles to worry about
             if altitude >= self.safe_altitude:
+                self.lander_sub_state.append("SAFE_ALTITUDE")
                 if give_up_landing_here:
+                    self.lander_base_state = "RESTARTING"
                     if self.search4new_place_timer==0:
                         # it will get a direction, random or based on the current heatmap, and move towards that
                         # direction for self.search4new_place_max_time seconds trying to find a new place to start looking
@@ -351,14 +378,19 @@ class TwistPublisher(Node):
                     # something doesn't look good, start giveup_landing_timer if it was not already started
                     if self.giveup_landing_timer == 0:
                         self.giveup_landing_timer = self.get_clock().now().nanoseconds/1E9
+                    else:
+                        self.lander_base_state = "RESTARTING"
                     # since things don't look good, stop descending and start ascending
                     z = self.z_speed
                 x = y = 0.0 # below safe altitude, no movements allowed on XY
 
-
-        if altitude<self.altitude_landed:
-            self.landing_done = True
-            self.shutdown_after_landed()
+        if zero_xy_error:
+            self.lander_sub_state.append("ZERO_XY_ERROR")
+        if flat_surface_below:
+            self.lander_sub_state.append("FLAT_SURFACE_BELOW")
+        if no_collisions_ahead:
+            self.lander_sub_state.append("NO_COLLISIONS_AHEAD")
+        self.publish_state()
 
         twist = Twist()
         # The UAV's maximum bank angle is limited to a very small value
