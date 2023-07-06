@@ -85,7 +85,7 @@ The system will activate the flight controller's internal landing procedure when
 * `heatmap_mask_erosion`: pixels used to erode the mask generated from the segmentation fused logits. Decreasing this value will make the system less conservative as the high valued areas (places good to land) will expand
 * `depth_smoothness`: depth value [m] for flatness and collision estimations. Increasing this value will make the system less conservative
 * `z_speed`: z speed setpoint. Increasing this value may lead to a less conservative system (it will play a role with the mov_avg_size, though)
-* `max_landing_time_sec`: maximum time expected before landing. Decreasing this value will make the `safety_threshold` and minimum flatness acceptable values decrease faster
+* `max_landing_time_sec`: maximum time expected before landing. Decreasing this value will make the `safety_threshold` and minimum landing surface flatness acceptable values decrease faster
 
 ## TODO
 * Improve code structure
