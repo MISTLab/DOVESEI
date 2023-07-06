@@ -34,8 +34,6 @@ FOV = math.radians(73) #TODO: get this from the camera topic...
 
 PROMPTS_SEARCHING = ["building", "tree", "road", "water", "transmission lines", "lamp post", "vehicle", "people"]
 PROMPTS_DESCENDING = ["vehicle", "people"]
-EPS = 0.001
-MAX_SEG_HEIGHT = 17 # helps filtering noise
 class TwistPublisher(Node):
 
     def __init__(self):
@@ -58,6 +56,8 @@ class TwistPublisher(Node):
         self.declare_parameter('use_random_search4new_place', False)
         self.declare_parameter('heatmap_mask_erosion', 7)
         self.declare_parameter('search4new_place_max_time', 60)
+        self.declare_parameter('max_seg_height', 17)
+        self.declare_parameter('zero_error_eps', 0.001)
         img_topic = self.get_parameter('img_topic').value
         depth_topic = self.get_parameter('depth_topic').value
         self.heatmap_topic = self.get_parameter('heatmap_topic').value
@@ -76,6 +76,8 @@ class TwistPublisher(Node):
         self.use_random_search4new_place = self.get_parameter('use_random_search4new_place').value
         self.heatmap_mask_erosion = self.get_parameter('heatmap_mask_erosion').value
         self.search4new_place_max_time = self.get_parameter('search4new_place_max_time').value
+        self.max_seg_height = self.get_parameter('max_seg_height').value
+        self.zero_error_eps = self.get_parameter('zero_error_eps').value
         
 
         
@@ -132,8 +134,10 @@ class TwistPublisher(Node):
 
     def publish_state(self):
         state_msg = String()
-        sub_states = set(self.lander_sub_state)
-        state_msg.data = self.lander_base_state + "-" + "-".join(sub_states) # .split("-") to recover a list
+        sub_states = [unordered for order in self.lander_sub_state_msgs for unordered in set(self.lander_sub_state) if unordered == order]
+        state_msg.data = self.lander_base_state
+        if len(sub_states):
+            state_msg.data += "-" + "-".join(sub_states) # .split("-") to recover a list
         self.state_pub.publish(state_msg)
         self.get_logger().info(f'Current state: {state_msg.data}')
 
@@ -222,12 +226,12 @@ class TwistPublisher(Node):
         # Reduce the received heatmap to a size that is approximately proportional
         # to the projection of the UAV's safety radius, but with these details:
         # - Always use odd values for height and width to guarantee a pixel at the centre
-        # - Limit the maximum number of pixels according to MAX_SEG_HEIGHT 
+        # - Limit the maximum number of pixels according to self.max_seg_height 
         # to avoid problems with noise in the semantic segmentation
         safety_radius_pixels = int(self.safety_radius/(2*proj/heatmap.shape[1]))
         resize = heatmap.shape[0]//safety_radius_pixels
         resize += 1-(resize % 2) # always odd
-        resize = resize if resize < MAX_SEG_HEIGHT else MAX_SEG_HEIGHT
+        resize = resize if resize < self.max_seg_height else self.max_seg_height
         resize_w = int(resize*(heatmap.shape[1]/heatmap.shape[0]))
         resize_w = resize_w + 1-(resize_w % 2) # always odd
 
@@ -328,8 +332,8 @@ class TwistPublisher(Node):
             y = ys_err
 
             # Very rudimentary filter
-            x = x if abs(x) > EPS else 0.0
-            y = y if abs(y) > EPS else 0.0
+            x = x if abs(x) > self.zero_error_eps else 0.0
+            y = y if abs(y) > self.zero_error_eps else 0.0
 
             zero_xy_error = (abs(x)+abs(y)) == 0.0
             # TODO: improve the flat_surface_below definition
@@ -384,12 +388,13 @@ class TwistPublisher(Node):
                     z = self.z_speed
                 x = y = 0.0 # below safe altitude, no movements allowed on XY
 
-        if zero_xy_error:
-            self.lander_sub_state.append("ZERO_XY_ERROR")
-        if flat_surface_below:
-            self.lander_sub_state.append("FLAT_SURFACE_BELOW")
-        if no_collisions_ahead:
-            self.lander_sub_state.append("NO_COLLISIONS_AHEAD")
+            if zero_xy_error:
+                self.lander_sub_state.append("ZERO_XY_ERROR")
+            if flat_surface_below:
+                self.lander_sub_state.append("FLAT_SURFACE_BELOW")
+            if no_collisions_ahead:
+                self.lander_sub_state.append("NO_COLLISIONS_AHEAD")
+        
         self.publish_state()
 
         twist = Twist()
