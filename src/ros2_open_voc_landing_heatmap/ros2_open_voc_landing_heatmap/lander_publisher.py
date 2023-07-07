@@ -32,7 +32,7 @@ from cv_bridge import CvBridge
 # semantic sementation because the second doesn't need a precise projection
 FOV = math.radians(73) #TODO: get this from the camera topic...
 
-PROMPTS_SEARCHING = ["building", "tree", "road", "water", "transmission lines", "lamp post", "vehicle", "people"]
+PROMPTS_SEARCHING = ["building", "tree", "road", "water", "wall", "fence", "transmission lines", "lamp post", "vehicle", "people"]
 PROMPTS_DESCENDING = ["vehicle", "people"]
 class TwistPublisher(Node):
 
@@ -102,6 +102,7 @@ class TwistPublisher(Node):
         self.search4new_place_direction = (0,0)
 
         self.init_time_sec = self.get_clock().now().nanoseconds/1E9
+        self.prev_time_sec = self.get_clock().now().nanoseconds/1E9
 
         self.lander_base_state_msgs = ["SEARCHING", "RESTARTING", "LANDED"]
         self.lander_base_state = None # only one base state is allowed
@@ -181,7 +182,7 @@ class TwistPublisher(Node):
         that approximates the UAV's safety radius projected according 
         to its current altitude
         """
-        proj = math.tan(FOV/2)*altitude
+        proj = math.tan(FOV/2)*altitude # [m]
 
         depth = self.cv_bridge.imgmsg_to_cv2(depthmsg, desired_encoding='passthrough')
         depth = np.asarray(cv2.resize(depth, 
@@ -196,14 +197,14 @@ class TwistPublisher(Node):
 
         # self.safety_radius and proj are in metres
         # depth.shape[1] is in px
-        safety_radius_pixels = int(self.safety_radius/(2*proj/depth.shape[1]))
+        safety_radius_pixels = int(self.safety_radius/(proj/depth.shape[1]))
         mask = np.zeros_like(depth)
         mask = cv2.circle(mask, (depth_center[1],depth_center[0]), safety_radius_pixels, 255, -1)
-        depth[mask!=255] = 0
+        depth[mask!=255] = 1000
         
         img_msg = self.cv_bridge.cv2_to_imgmsg(depth.astype('uint8'), encoding='mono8')
         self.depth_proj_pub.publish(img_msg)
-        return depth[depth>0].std(),depth[depth>0].min()
+        return depth[1000>depth].std(),depth[1000>depth].min()
 
 
 
@@ -296,10 +297,17 @@ class TwistPublisher(Node):
         # Beware: spaghetti-code state machine below!
         self.get_logger().debug(f'New data received!')
 
-        elapsed_time = self.get_clock().now().nanoseconds/1E9-self.init_time_sec
-        conservative_gain = 1-np.exp(1-self.max_landing_time_sec/elapsed_time)
+        curr_time_sec = self.get_clock().now().nanoseconds/1E9
+
+        delta_t_sec = curr_time_sec - self.prev_time_sec
+        if delta_t_sec == 0:
+            return
+        self.prev_time_sec = curr_time_sec
+
+        elapsed_time_sec = curr_time_sec-self.init_time_sec
+        conservative_gain = 1-np.exp(1-self.max_landing_time_sec/elapsed_time_sec)
         self.conservative_gain = conservative_gain if conservative_gain > self.min_conservative_gain else self.min_conservative_gain
-        self.get_logger().info(f'Elapsed time [s]: {elapsed_time} - Conservative gain: {self.conservative_gain}')
+        self.get_logger().info(f'Elapsed time [s]: {elapsed_time_sec} (curr. loop freq. {1/delta_t_sec:.2f}Hz) - Conservative gain: {self.conservative_gain}')
 
         self.lander_base_state = None
         self.lander_sub_state = []
@@ -350,7 +358,7 @@ class TwistPublisher(Node):
             # TODO: improve the flat_surface_below definition
             flat_surface_below = depth_std < self.depth_smoothness/self.conservative_gain
             # TODO: improve the no_collisions_ahead definition
-            no_collisions_ahead = depth_min > self.depth_smoothness
+            no_collisions_ahead = (depth_min >= self.max_depth_sensing) or abs(altitude - depth_min) < self.depth_smoothness
             give_up_landing_here = (time_since_giveup_landing > self.giveup_after_sec)
             self.get_logger().info(f"zero_xy_error: {zero_xy_error}, flat_surface_below: {flat_surface_below}, no_collisions_ahead: {no_collisions_ahead}, give_up_landing_here: {give_up_landing_here}")
 
@@ -370,7 +378,7 @@ class TwistPublisher(Node):
                             # ("emptiness" and distance to the UAV) and their values are normalized in relation to the heatmap.
                             # Then it filters values at least distant 0.5 (normalized value) from the UAV and gets the first as its search direction.
                             self.search4new_place_direction = xy_err[(xy_err**2).sum(axis=1) >= 0.5][0] 
-                        self.search4new_place_timer = self.get_clock().now().nanoseconds/1E9
+                        self.search4new_place_timer = curr_time_sec
                     search4new_place_time_passed = (self.get_clock().now().nanoseconds/1E9 - self.search4new_place_timer)
                     if search4new_place_time_passed > self.search4new_place_max_time:
                         self.giveup_landing_timer = 0 # safe place, reset giveup_landing_timer
@@ -392,7 +400,7 @@ class TwistPublisher(Node):
                 else:
                     # something doesn't look good, start giveup_landing_timer if it was not already started
                     if self.giveup_landing_timer == 0:
-                        self.giveup_landing_timer = self.get_clock().now().nanoseconds/1E9
+                        self.giveup_landing_timer = curr_time_sec
                     else:
                         self.lander_base_state = "RESTARTING"
                     # since things don't look good, stop descending and start ascending
