@@ -60,7 +60,9 @@ class GenerateLandingHeatmap(Node):
         self.get_logger().info('New request received!')
 
         input_image = self.cv_bridge.imgmsg_to_cv2(request.image, desired_encoding='rgb8')
-        prompts = request.prompts.split(';')
+        negative_prompts = request.negative_prompts.split(';')
+        positive_prompts = request.positive_prompts.split(';')
+        prompts = negative_prompts + positive_prompts
         erosion_size = request.erosion_size
         safety_threshold = request.safety_threshold
 
@@ -69,6 +71,7 @@ class GenerateLandingHeatmap(Node):
                                             (erosion_size, erosion_size))
 
         with torch.inference_mode():
+            # TODO: recycle old prompts to avoid encoding the same prompts multiple times...
             inputs = processor(text=prompts, images=[input_image] * len(prompts), padding=True, return_tensors="pt")
             for k in inputs:
                 if torch.cuda.is_available():
@@ -82,7 +85,17 @@ class GenerateLandingHeatmap(Node):
         logits = np.clip(logits.reshape((len(prompts),*logits.shape[-2:]))*self.model_calib_cte, 0, 1)
 
         # Fuse all logits using the max values
-        logits = 1-logits.max(axis=0)
+        if len(negative_prompts):
+            fused_negative_logits = logits[:len(negative_prompts)].max(axis=0)
+        else:
+            fused_negative_logits = np.zeros(logits.shape[-2:])
+
+        if len(positive_prompts):
+            fused_positive_logits = logits[-len(positive_prompts):].max(axis=0)
+        else:
+            fused_positive_logits = np.zeros(logits.shape[-2:])
+
+        logits = 1 + np.clip(fused_positive_logits-fused_negative_logits, -1, 0)
 
         # Blur to smooth the ViT patches
         logits = cv2.blur(logits,(self.blur_kernel_size,self.blur_kernel_size))

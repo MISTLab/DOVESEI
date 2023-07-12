@@ -1,5 +1,6 @@
 sensor_msgs/Image image
-string prompts
+string negative_prompts
+string positive_prompts
 int8 erosion_size
 float32 safety_threshold
 ---

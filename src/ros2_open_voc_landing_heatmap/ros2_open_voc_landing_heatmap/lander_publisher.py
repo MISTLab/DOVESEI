@@ -32,8 +32,10 @@ from cv_bridge import CvBridge
 # semantic sementation because the second doesn't need a precise projection
 FOV = math.radians(73) #TODO: get this from the camera topic...
 
-PROMPTS_SEARCHING = ["building", "tree", "road", "water", "wall", "fence", "transmission lines", "lamp post", "vehicle", "people"]
-PROMPTS_DESCENDING = ["vehicle", "people"]
+NEGATIVE_PROMPTS_SEARCHING = ["building", "tree", "road", "water", "wall", "fence", "transmission lines", "lamp post", "vehicle", "people"]
+POSITIVE_PROMPTS_SEARCHING = ["grass", "field", "sand"]
+NEGATIVE_PROMPTS_DESCENDING = ["vehicle", "people"]
+POSITIVE_PROMPTS_DESCENDING = ["grass", "field", "sand"]
 class TwistPublisher(Node):
 
     def __init__(self):
@@ -208,7 +210,7 @@ class TwistPublisher(Node):
 
 
 
-    def error_from_semantics(self, rgbmsg, altitude, prompts):
+    def error_from_semantics(self, rgbmsg, altitude, positive_prompts, negative_prompts):
         """Normalized XY error according to the best place to land defined by the heatmap
         received from the generate_landing_heatmap service
         The heatmap received will be a mono8 image where the higher the value 
@@ -216,7 +218,7 @@ class TwistPublisher(Node):
         """
         proj = math.tan(FOV/2)*altitude
         self.get_logger().debug(f'Sending heatmap service request...')
-        response = self.get_heatmap(rgbmsg, prompts, erosion_size=self.heatmap_mask_erosion)
+        response = self.get_heatmap(rgbmsg, positive_prompts, negative_prompts, erosion_size=self.heatmap_mask_erosion)
         if response is None:
             self.get_logger().error(f'Empty response?!?!')
             return
@@ -337,14 +339,17 @@ class TwistPublisher(Node):
             # We have two sets of prompts used to generate the landing heatmap
             # One set (PROMPTS_SEARCHING) is used when the UAV is flying above any obstacle (safety information previously known)
             # and it's searching for a place to land
-            prompts = PROMPTS_SEARCHING
+            negative_prompts = NEGATIVE_PROMPTS_SEARCHING
+            positive_prompts = POSITIVE_PROMPTS_SEARCHING
             if altitude < self.safe_altitude*0.8: # 0.8 is to give a margin for the heatmap generation (moving average)
-                prompts = PROMPTS_DESCENDING      #TODO: fix this hack...
+                                                  #TODO: fix this hack...
+                negative_prompts = NEGATIVE_PROMPTS_DESCENDING 
+                positive_prompts = POSITIVE_PROMPTS_DESCENDING
 
-            xy_err = self.error_from_semantics(rgbmsg, altitude, prompts)
+            xy_err = self.error_from_semantics(rgbmsg, altitude, positive_prompts, negative_prompts)
             xs_err = xy_err[0,0]
             ys_err = xy_err[0,1]
-            self.get_logger().info(f"Current prompts: {prompts}")
+            self.get_logger().info(f"Current prompts: {negative_prompts}, {positive_prompts}")
             self.get_logger().info(f"Segmentation X,Y err: {xs_err:.2f},{ys_err:.2f}, Depth std, min: {depth_std:.2f},{depth_min:.2f}")
             
             x = xs_err
@@ -424,7 +429,7 @@ class TwistPublisher(Node):
         twist.linear.x = x * self.gain
         twist.linear.y = -y * self.gain
         twist.linear.z = z
-        twist.linear.x = twist.linear.y = 0.0 ##DEBUG
+        # twist.linear.x = twist.linear.y = 0.0 ##DEBUG
         twist.angular.x = 0.0
         twist.angular.y = 0.0
         twist.angular.z = 0.0
@@ -435,13 +440,14 @@ class TwistPublisher(Node):
 
         
 
-    def get_heatmap(self, image_msg, prompts, erosion_size):
+    def get_heatmap(self, image_msg, positive_prompts, negative_prompts, erosion_size):
         #TODO: research a solution and fix service callback hack (I think Galactic is the problem... but I am not sure)
 
-        #request.image, request.prompts, request.erosion_size
+        #request.image, request.positive_prompts, request.negative_prompts, request.erosion_size
         self.req.image = image_msg
         # the service expects a string of prompts separated by ';'
-        self.req.prompts = ";".join(prompts)
+        self.req.positive_prompts = ";".join(positive_prompts)
+        self.req.negative_prompts = ";".join(negative_prompts)
         self.req.erosion_size = int(erosion_size)
         self.req.safety_threshold = self.safety_threshold*float(self.conservative_gain)
 
