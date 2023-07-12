@@ -32,7 +32,7 @@ from cv_bridge import CvBridge
 # semantic sementation because the second doesn't need a precise projection
 FOV = math.radians(73) #TODO: get this from the camera topic...
 
-NEGATIVE_PROMPTS_SEARCHING = ["building", "tree", "road", "water", "wall", "fence", "transmission lines", "lamp post", "vehicle", "people"]
+NEGATIVE_PROMPTS_SEARCHING = ["building", "house", "roof", "asphalt", "tree", "road", "water", "wall", "fence", "transmission lines", "lamp post", "vehicle", "people"]
 POSITIVE_PROMPTS_SEARCHING = ["grass", "field", "sand"]
 NEGATIVE_PROMPTS_DESCENDING = ["vehicle", "people"]
 POSITIVE_PROMPTS_DESCENDING = ["grass", "field", "sand"]
@@ -429,7 +429,7 @@ class TwistPublisher(Node):
         twist.linear.x = x * self.gain
         twist.linear.y = -y * self.gain
         twist.linear.z = z
-        # twist.linear.x = twist.linear.y = 0.0 ##DEBUG
+        # twist.linear.x = twist.linear.y = twist.linear.z = 0.0 ##DEBUG
         twist.angular.x = 0.0
         twist.angular.y = 0.0
         twist.angular.z = 0.0
