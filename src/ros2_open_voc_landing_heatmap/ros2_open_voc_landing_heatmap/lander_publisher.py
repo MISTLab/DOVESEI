@@ -1,5 +1,14 @@
+"""
+Autonomous landing module  
+
+Uses semantic segmentation and depth data to detect safe landing zones.
+Controls UAV movement and landing approach.
+"""
+
 import math
 from threading import Event
+from enum import Enum
+from dataclasses import dataclass
 
 import numpy as np
 import cv2
@@ -34,12 +43,31 @@ FOV = math.radians(73) #TODO: get this from the camera topic...
 
 NEGATIVE_PROMPTS_SEARCHING = ["building", "house", "roof", "asphalt", "tree", "road", "water", "wall", "fence", "transmission lines", "lamp post", "vehicle", "people"]
 POSITIVE_PROMPTS_SEARCHING = ["grass", "field", "sand"]
-NEGATIVE_PROMPTS_DESCENDING = ["vehicle", "people"]
-POSITIVE_PROMPTS_DESCENDING = ["grass", "field", "sand"]
-class TwistPublisher(Node):
+NEGATIVE_PROMPTS_LANDING= ["vehicle", "people"]
+POSITIVE_PROMPTS_LANDING= ["grass", "field", "sand"]
+
+
+class LandingState(Enum):
+    SEARCHING = 0 
+    LANDING = 1
+    WAITING = 2
+    CLIMBING = 3
+    RESTARTING = 4
+    LANDED = 5
+    SHUTTING_DOWN = 6
+    SENSOR_ERROR = 7
+
+@dataclass
+class LandingStatus:
+    state: LandingState = LandingState.SEARCHING
+    is_safe: bool = False   # UAV can move in the XY directions safely
+    is_clear: bool = False  # UAV can descend safely, no obstacles
+    is_flat: bool = False   # UAV can land safely, ground is flat (enough)
+
+class LandingModule(Node):
 
     def __init__(self):
-        super().__init__('lander_publisher')
+        super().__init__('landing_module')
         self.declare_parameter('img_topic', '/carla/flying_sensor/rgb_down/image')
         self.declare_parameter('depth_topic', '/carla/flying_sensor/depth_down/image')
         self.declare_parameter('heatmap_topic', '/heatmap')
@@ -95,8 +123,6 @@ class TwistPublisher(Node):
 
         self.img_msg = None
 
-        self.landing_done = False
-
         self.giveup_landing_timer = 0
 
         self.search4new_place_timer = 0
@@ -106,10 +132,7 @@ class TwistPublisher(Node):
         self.init_time_sec = self.get_clock().now().nanoseconds/1E9
         self.prev_time_sec = self.get_clock().now().nanoseconds/1E9
 
-        self.lander_base_state_msgs = ["SEARCHING", "RESTARTING", "LANDED"]
-        self.lander_base_state = None # only one base state is allowed
-        self.lander_sub_state_msgs = ["SAFE_ALTITUDE", "ZERO_XY_ERROR", "FLAT_SURFACE_BELOW", "NO_COLLISIONS_AHEAD"]
-        self.lander_sub_state = [] # multiple sub states
+        self.landing_status = LandingStatus()
 
         self.cli = self.create_client(GetLandingHeatmap, 'generate_landing_heatmap',
                                       callback_group=ReentrantCallbackGroup())
@@ -141,16 +164,6 @@ class TwistPublisher(Node):
         self.get_logger().info('Ready to publish some twist messages!')
 
 
-    def publish_state(self):
-        state_msg = String()
-        sub_states = [unordered for order in self.lander_sub_state_msgs for unordered in set(self.lander_sub_state) if unordered == order]
-        state_msg.data = self.lander_base_state
-        if len(sub_states):
-            state_msg.data += "-" + "-".join(sub_states) # .split("-") to recover a list
-        self.state_pub.publish(state_msg)
-        self.get_logger().info(f'Current state: {state_msg.data}')
-
-
     def get_tf(self, t=0.0, timeout=1.0, map_frame="map", target_frame="flying_sensor"):
         """Only needed to grab the altitude so we can simulate 
         the altitude estimation received from a real flight controller
@@ -179,12 +192,13 @@ class TwistPublisher(Node):
             self.get_logger().error(f'Could not transform {map_frame} to {target_frame}: {ex}')
 
 
-    def depth_proj(self, depthmsg, altitude, max_dist=20):
+    def get_depth_stats(self, depthmsg):
         """Masks the depth image received leaving only a circle
         that approximates the UAV's safety radius projected according 
         to its current altitude
         """
-        proj = math.tan(FOV/2)*altitude # [m]
+        proj = math.tan(FOV/2)*self.curr_altitude # [m]
+        max_dist = self.max_depth_sensing
 
         depth = self.cv_bridge.imgmsg_to_cv2(depthmsg, desired_encoding='passthrough')
         depth = np.asarray(cv2.resize(depth, 
@@ -210,18 +224,19 @@ class TwistPublisher(Node):
 
 
 
-    def error_from_semantics(self, rgbmsg, altitude, positive_prompts, negative_prompts):
+    def get_xy_error_from_semantics(self, rgbmsg, positive_prompts, negative_prompts):
         """Normalized XY error according to the best place to land defined by the heatmap
         received from the generate_landing_heatmap service
         The heatmap received will be a mono8 image where the higher the value 
         the better the place for landing.
         """
-        proj = math.tan(FOV/2)*altitude
+        proj = math.tan(FOV/2)*self.curr_altitude
         self.get_logger().debug(f'Sending heatmap service request...')
         response = self.get_heatmap(rgbmsg, positive_prompts, negative_prompts, erosion_size=self.heatmap_mask_erosion)
         if response is None:
-            self.get_logger().error(f'Empty response?!?!')
-            return
+            self.get_logger().error(f'get_heatmap returned an empty response?!?!')
+            # np.inf won't be easily hidden by another operation and it can be spotted with ~np.isfinite
+            return np.asarray([[np.inf,np.inf]])
         
         self.get_logger().debug(f'Heatmap received!')
         heatmap_msg = response.heatmap
@@ -290,92 +305,119 @@ class TwistPublisher(Node):
         return init_pos[2]
     
 
-    def shutdown_after_landed(self):
-        # TODO: implement procedures after landed
-        self.get_logger().error("Landed!")
+    def publish_twist(self, x, y, z, debug=False):
+        twist = Twist()
+        # The UAV's maximum bank angle is limited to a very small value
+        # and this is why such a simple control works.
+        # Additionally, the assumption is that the maximum speed is very low
+        # otherwise the moving average used in the semantic segmentation will break.
+        twist.linear.x = float(x * self.gain)
+        twist.linear.y = float(-y * self.gain)
+        twist.linear.z = float(z)
+        
+        if debug:
+            twist.linear.x = twist.linear.y = twist.linear.z = 0.0 ##DEBUG
+        
+        twist.angular.x = 0.0
+        twist.angular.y = 0.0
+        twist.angular.z = 0.0
+
+        self.get_logger().info(f'Publishing velocities ({(twist.linear.x, twist.linear.y, twist.linear.z)}) at {self.twist_topic}')
+        self.twist_pub.publish(twist)
+
+
+    def publish_status(self):
+        state_msg = String()
+        msg_str = str(self.landing_status.state).split('.')[1]
+        if self.landing_status.is_safe:
+            msg_str += "-safe"
+        if self.landing_status.is_clear:
+            msg_str += "-clear"
+        if self.landing_status.is_flat:
+            msg_str += "-flat"
+        state_msg.data = msg_str
+        self.state_pub.publish(state_msg)
+        self.get_logger().info(f'Current state: {state_msg.data}')
+        self.get_logger().info(f"Altitude: {self.curr_altitude:.2f}")
 
 
     def sense_and_act(self, rgbmsg, depthmsg):
         # Beware: spaghetti-code state machine below!
-        self.get_logger().debug(f'New data received!')
-
         curr_time_sec = self.get_clock().now().nanoseconds/1E9
-
         delta_t_sec = curr_time_sec - self.prev_time_sec
         if delta_t_sec == 0:
             return
         self.prev_time_sec = curr_time_sec
-
         elapsed_time_sec = curr_time_sec-self.init_time_sec
+
+        self.curr_altitude = self.get_altitude()
+        if self.curr_altitude is None:
+            return
+        
+        if self.curr_altitude >= self.safe_altitude:
+            self.landing_status.is_safe = True
+        else:
+            self.landing_status.is_safe = False
+            self.get_logger().warn(f"Safe altitude breached, no movements allowed on XY!")
+
+        # We have two sets of prompts used to generate the landing heatmap
+        # One set (PROMPTS_SEARCHING) is used when the UAV is flying above any obstacle (safety information previously known)
+        # and it's searching for a place to land
+        # The multiplier 0.8 is to give a margin for the heatmap generation (moving average), mostly on its way up
+        # TODO: fix this multiplier hack...
+        if self.curr_altitude < self.safe_altitude*0.8:
+            negative_prompts = NEGATIVE_PROMPTS_LANDING
+            positive_prompts = POSITIVE_PROMPTS_LANDING
+        else:
+            negative_prompts = NEGATIVE_PROMPTS_SEARCHING
+            positive_prompts = POSITIVE_PROMPTS_SEARCHING
+        self.get_logger().info(f"Current prompts: {negative_prompts}, {positive_prompts}")
+
+        # The conservative_gain is a very simple (hacky?) way to force the system to relax its decisions as time passes 
+        # because at the end of the day it will be limited by its battery and the worst scenario is to fall from the sky
         conservative_gain = 1-np.exp(1-self.max_landing_time_sec/elapsed_time_sec)
         self.conservative_gain = conservative_gain if conservative_gain > self.min_conservative_gain else self.min_conservative_gain
         self.get_logger().info(f'Elapsed time [s]: {elapsed_time_sec} (curr. loop freq. {1/delta_t_sec:.2f}Hz) - Conservative gain: {self.conservative_gain}')
-
-        self.lander_base_state = None
-        self.lander_sub_state = []
-
-        altitude = self.get_altitude()
-        if altitude is None:
-            return
+      
+        depth_std, depth_min = self.get_depth_stats(depthmsg)
+        self.get_logger().info(f"Depth STD, MIN: {depth_std:.2f},{depth_min:.2f}")
         
-        self.get_logger().info(f"Altitude: {altitude:.2f}")
+        xy_err = self.get_xy_error_from_semantics(rgbmsg, positive_prompts, negative_prompts)
+        xs_err = xy_err[0,0]
+        ys_err = xy_err[0,1]
+        self.get_logger().info(f"Segmentation X,Y ERR: {xs_err:.2f},{ys_err:.2f}")
 
-        x = y = z = 0.0
-        if altitude<self.altitude_landed:
-            self.landing_done = True
-            self.lander_base_state = "LANDED"
-            self.shutdown_after_landed()
+        # Very rudimentary filter
+        xs_err = xs_err if abs(xs_err) > self.zero_error_eps else 0.0
+        ys_err = ys_err if abs(ys_err) > self.zero_error_eps else 0.0
+        zero_xy_error = (abs(xs_err)+abs(ys_err)) == 0.0
+        # TODO: improve the flat surface definition
+        self.landing_status.is_flat = depth_std < self.depth_smoothness/self.conservative_gain
+        # TODO: improve the no_collisions_ahead definition
+        no_collisions_ahead = (depth_min >= self.max_depth_sensing) or abs(self.curr_altitude - depth_min) < self.altitude_landed
+        self.landing_status.is_clear = zero_xy_error and no_collisions_ahead
+        self.get_logger().info(f"zero_xy_error: {zero_xy_error}, flat_surface_below: {self.landing_status.is_flat}, no_collisions_ahead: {no_collisions_ahead}")
+
+        # Trying to isolate all the sensing above 
+        # and the state switching decisions below.
+        # TODO: isolate the sensing and state decision in two distinct methods...
+        if self.curr_altitude<self.altitude_landed:
+            self.landing_status.state = LandingState.LANDED
+        elif ~np.isfinite(xs_err) or ~np.isfinite(ys_err) or ~np.isfinite(depth_std) or ~np.isfinite(depth_min):
+            self.landing_status.state = LandingState.SENSOR_ERROR
+        elif self.giveup_landing_timer == 0:
+            if self.landing_status.is_clear and self.landing_status.is_flat:
+                self.landing_status.state = LandingState.LANDING
+            elif self.landing_status.state != LandingState.SEARCHING:
+                self.giveup_landing_timer = curr_time_sec
+                self.landing_status.state = LandingState.WAITING
         else:
-            self.lander_base_state = "SEARCHING"
-            if self.giveup_landing_timer == 0:
-                time_since_giveup_landing = 0
-            else:
-                time_since_giveup_landing = (self.get_clock().now().nanoseconds/1E9 - self.giveup_landing_timer)
-                self.get_logger().warn(f"Time since giveup_landing_timer enabled: {time_since_giveup_landing}")
-
-            depth_std, depth_min = self.depth_proj(depthmsg, altitude, max_dist=self.max_depth_sensing)
-
-            xs_err = ys_err = 0.0
-            # We have two sets of prompts used to generate the landing heatmap
-            # One set (PROMPTS_SEARCHING) is used when the UAV is flying above any obstacle (safety information previously known)
-            # and it's searching for a place to land
-            negative_prompts = NEGATIVE_PROMPTS_SEARCHING
-            positive_prompts = POSITIVE_PROMPTS_SEARCHING
-            if altitude < self.safe_altitude*0.8: # 0.8 is to give a margin for the heatmap generation (moving average)
-                                                  #TODO: fix this hack...
-                negative_prompts = NEGATIVE_PROMPTS_DESCENDING 
-                positive_prompts = POSITIVE_PROMPTS_DESCENDING
-
-            xy_err = self.error_from_semantics(rgbmsg, altitude, positive_prompts, negative_prompts)
-            xs_err = xy_err[0,0]
-            ys_err = xy_err[0,1]
-            self.get_logger().info(f"Current prompts: {negative_prompts}, {positive_prompts}")
-            self.get_logger().info(f"Segmentation X,Y err: {xs_err:.2f},{ys_err:.2f}, Depth std, min: {depth_std:.2f},{depth_min:.2f}")
-            
-            x = xs_err
-            y = ys_err
-
-            # Very rudimentary filter
-            x = x if abs(x) > self.zero_error_eps else 0.0
-            y = y if abs(y) > self.zero_error_eps else 0.0
-
-            zero_xy_error = (abs(x)+abs(y)) == 0.0
-            # TODO: improve the flat_surface_below definition
-            flat_surface_below = depth_std < self.depth_smoothness/self.conservative_gain
-            # TODO: improve the no_collisions_ahead definition
-            no_collisions_ahead = (depth_min >= self.max_depth_sensing) or abs(altitude - depth_min) < self.altitude_landed
-            give_up_landing_here = (time_since_giveup_landing > self.giveup_after_sec)
-            self.get_logger().info(f"zero_xy_error: {zero_xy_error}, flat_surface_below: {flat_surface_below}, no_collisions_ahead: {no_collisions_ahead}, give_up_landing_here: {give_up_landing_here}")
-
-            # altitude >= self.safe_altitude means the UAV is flying high enough and there are no obstacles to worry about
-            if altitude >= self.safe_altitude:
-                self.lander_sub_state.append("SAFE_ALTITUDE")
-                if give_up_landing_here:
-                    self.lander_base_state = "RESTARTING"
-                    if self.search4new_place_timer==0:
-                        # it will get a direction, random or based on the current heatmap, and move towards that
-                        # direction for self.search4new_place_max_time seconds trying to find a new place to start looking
-                        # for a place to land again (therefore avoiding getting stuck to current spot)
+            time_since_giveup_landing = (curr_time_sec - self.giveup_landing_timer)
+            self.get_logger().warn(f"Time since giveup_landing_timer enabled: {time_since_giveup_landing}")        
+            if (time_since_giveup_landing > self.giveup_after_sec):
+                if self.landing_status.is_safe:
+                    self.landing_status.state = LandingState.RESTARTING
+                    if self.search4new_place_timer == 0:
                         if self.use_random_search4new_place:
                             self.search4new_place_direction = np.random.rand(2)-1 # uniform random [-0.5,0.5] search direction
                         else:
@@ -384,58 +426,39 @@ class TwistPublisher(Node):
                             # Then it filters values at least distant 0.5 (normalized value) from the UAV and gets the first as its search direction.
                             self.search4new_place_direction = xy_err[(xy_err**2).sum(axis=1) >= 0.5][0] 
                         self.search4new_place_timer = curr_time_sec
-                    search4new_place_time_passed = (self.get_clock().now().nanoseconds/1E9 - self.search4new_place_timer)
+                    search4new_place_time_passed = (curr_time_sec - self.search4new_place_timer)
                     if search4new_place_time_passed > self.search4new_place_max_time:
                         self.giveup_landing_timer = 0 # safe place, reset giveup_landing_timer
                         self.search4new_place_timer = 0
-                        self.get_logger().error(f"Search 4 new place finished!")
-                    else:
-                        self.get_logger().error(f"Search 4 new place is ON ({search4new_place_time_passed})!")
-                    x,y = self.search4new_place_direction
-                elif zero_xy_error:
-                    z = -self.z_speed  
-            else:
-                self.get_logger().warn(f"Safe altitude breached, no movements allowed on XY!")
-                # giveup_landing_timer helps filtering noisy decisions as the UAV will only give up landing 
-                # on the current spot after one of the triggers consistently flags a bad place for
-                # at least self.giveup_after_sec seconds
-                if zero_xy_error and flat_surface_below and no_collisions_ahead and not give_up_landing_here:
-                    self.giveup_landing_timer = 0 # things look fine, reset give up timer
-                    z = -self.z_speed
+                        self.landing_status.state = LandingState.SEARCHING
                 else:
-                    # something doesn't look good, start giveup_landing_timer if it was not already started
-                    if self.giveup_landing_timer == 0:
-                        self.giveup_landing_timer = curr_time_sec
-                    else:
-                        self.lander_base_state = "RESTARTING"
-                    # since things don't look good, stop descending and start ascending
-                    z = self.z_speed
-                x = y = 0.0 # below safe altitude, no movements allowed on XY
+                    self.landing_status.state = LandingState.CLIMBING          
+            elif self.landing_status.is_clear and self.landing_status.is_flat:      
+                self.landing_status.state = LandingState.LANDING
+                self.giveup_landing_timer = 0
 
-            if zero_xy_error:
-                self.lander_sub_state.append("ZERO_XY_ERROR")
-            if flat_surface_below:
-                self.lander_sub_state.append("FLAT_SURFACE_BELOW")
-            if no_collisions_ahead:
-                self.lander_sub_state.append("NO_COLLISIONS_AHEAD")
-        
-        self.publish_state()
-
-        twist = Twist()
-        # The UAV's maximum bank angle is limited to a very small value
-        # and this is why such a simple control works.
-        # Additionally, the assumption is that the maximum speed is very low
-        # otherwise the moving average used in the semantic segmentation will break.
-        twist.linear.x = x * self.gain
-        twist.linear.y = -y * self.gain
-        twist.linear.z = z
-        # twist.linear.x = twist.linear.y = twist.linear.z = 0.0 ##DEBUG
-        twist.angular.x = 0.0
-        twist.angular.y = 0.0
-        twist.angular.z = 0.0
-
-        self.get_logger().info(f'Publishing velocities ({(twist.linear.x, twist.linear.y, twist.linear.z)}) at {self.twist_topic}')
-        self.twist_pub.publish(twist)
+        if self.landing_status.state == LandingState.LANDED:
+            x = y = z = 0.0
+        elif self.landing_status.state == LandingState.SENSOR_ERROR:
+            x = y = z = 0.0
+        elif self.landing_status.state == LandingState.SEARCHING:
+            x = xs_err
+            y = ys_err
+            z = 0.0
+        elif self.landing_status.state == LandingState.LANDING:
+            x = y = 0.0
+            z = -self.z_speed
+        elif self.landing_status.state == LandingState.CLIMBING:
+            x = y = 0.0
+            z = self.z_speed
+        elif self.landing_status.state == LandingState.WAITING:
+            x = y = z = 0.0
+        elif self.landing_status.state == LandingState.RESTARTING:
+            x,y = self.search4new_place_direction
+            z = 0.0
+       
+        self.publish_status()
+        self.publish_twist(x,y,z)
 
 
         
@@ -464,15 +487,17 @@ class TwistPublisher(Node):
 
 
     def on_shutdown_cb(self):
+        self.landing_status.state = LandingState.SHUTTING_DOWN
+        self.publish_twist(0,0,0)
+        self.publish_status()
         self.get_logger().error('Shutting down... sending zero velocities!')
-        self.twist_pub.publish(Twist())
 
 
-def main():
-    rclpy.init()
-    lander_publisher = TwistPublisher()
+def main(args=None):
+    rclpy.init(args=args)
+    landing_module = LandingModule()
     executor = MultiThreadedExecutor(num_threads=2)
-    executor.add_node(lander_publisher)
+    executor.add_node(landing_module)
     try:
         executor.spin()
 
@@ -480,9 +505,9 @@ def main():
         pass
 
     finally:
-        lander_publisher.on_shutdown_cb()
+        landing_module.on_shutdown_cb()
         executor.shutdown()
-        lander_publisher.destroy_node()
+        landing_module.destroy_node()
 
 
 if __name__ == '__main__':
