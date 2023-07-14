@@ -76,7 +76,8 @@ class GenerateLandingHeatmap(Node):
 
         self.get_logger().debug('New heatmap request received!')
 
-        input_image = self.cv_bridge.imgmsg_to_cv2(request.image, desired_encoding='rgb8')
+        input_image_msg = request.image
+        input_image = self.cv_bridge.imgmsg_to_cv2(input_image_msg, desired_encoding='rgb8')
         negative_prompts = request.negative_prompts.split(';')
         positive_prompts = request.positive_prompts.split(';')
         prompts = negative_prompts + positive_prompts
@@ -123,9 +124,13 @@ class GenerateLandingHeatmap(Node):
         logits = 1 + np.clip(fused_positive_logits-fused_negative_logits, -1, 0)
 
         positive_heatmap = (cv2.resize(fused_positive_logits, (input_image.shape[1],input_image.shape[0]), cv2.INTER_AREA)*255).astype('uint8')##DEBUG
-        self.positive_img_pub.publish(self.cv_bridge.cv2_to_imgmsg(positive_heatmap*255, encoding='mono8'))##DEBUG
+        positive_heatmap_msg = self.cv_bridge.cv2_to_imgmsg(positive_heatmap*255, encoding='mono8')
+        positive_heatmap_msg.header.frame_id = input_image_msg.header.frame_id
+        self.positive_img_pub.publish(positive_heatmap_msg)##DEBUG
         negative_heatmap = (cv2.resize(fused_negative_logits, (input_image.shape[1],input_image.shape[0]), cv2.INTER_AREA)*255).astype('uint8')##DEBUG
-        self.negative_img_pub.publish(self.cv_bridge.cv2_to_imgmsg(negative_heatmap*255, encoding='mono8'))##DEBUG
+        negative_heatmap_msg = self.cv_bridge.cv2_to_imgmsg(negative_heatmap*255, encoding='mono8')
+        negative_heatmap_msg.header.frame_id = input_image_msg.header.frame_id
+        self.negative_img_pub.publish(negative_heatmap_msg)##DEBUG
 
         # Blur to smooth the ViT patches
         logits = cv2.blur(logits,(self.blur_kernel_size,self.blur_kernel_size))
