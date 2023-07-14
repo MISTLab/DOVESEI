@@ -20,12 +20,13 @@ from cv_bridge import CvBridge
 
 
 CLIPSEG_OUTPUT_SIZE = 352
+PROMPT_ENGINEERING = "3D rendered image of {}, animation, game"
 
 class GenerateLandingHeatmap(Node):
 
     def __init__(self):
         super().__init__('generate_landing_heatmap')
-        self.declare_parameter('model_calib_cte', 40.0)
+        self.declare_parameter('model_calib_cte', 0.0)
         self.declare_parameter('blur_kernel_size', 15)
         #self.add_on_set_parameters_callback(self.parameters_callback)
 
@@ -47,7 +48,8 @@ class GenerateLandingHeatmap(Node):
 
         self.cv_bridge = CvBridge()
 
-        self.debug_img_pub = self.create_publisher(ImageMsg, "/original_heatmap",1) ##DEBUG
+        self.positive_img_pub = self.create_publisher(ImageMsg, "/original_heatmap_positive",1) ##DEBUG
+        self.negative_img_pub = self.create_publisher(ImageMsg, "/original_heatmap_negative",1) ##DEBUG
 
         self.srv = self.create_service(GetLandingHeatmap, 'generate_landing_heatmap', self.get_landing_heatmap_callback)
         if torch.cuda.is_available(): self.get_logger().warn('generate_landing_heatmap is using cuda!')
@@ -63,6 +65,7 @@ class GenerateLandingHeatmap(Node):
         negative_prompts = request.negative_prompts.split(';')
         positive_prompts = request.positive_prompts.split(';')
         prompts = negative_prompts + positive_prompts
+        prompts = [PROMPT_ENGINEERING.format(p) for p in prompts]
         erosion_size = request.erosion_size
         safety_threshold = request.safety_threshold
 
@@ -81,21 +84,38 @@ class GenerateLandingHeatmap(Node):
             logits = model(**inputs).logits
             logits = logits.softmax(dim=1).detach().cpu().numpy()
         
-        # Apply calibration and clip to [0,1]
-        logits = np.clip(logits.reshape((len(prompts),*logits.shape[-2:]))*self.model_calib_cte, 0, 1)
+        # original_heatmap = np.clip(logits.max(axis=0),0,1)
+        # original_heatmap = original_heatmap/original_heatmap.max()
+        # original_heatmap = (cv2.resize(original_heatmap, (input_image.shape[1],input_image.shape[0]), cv2.INTER_AREA)*255).astype('uint8')##DEBUG
+        # self.debug_img_pub.publish(self.cv_bridge.cv2_to_imgmsg(original_heatmap, encoding='mono8'))##DEBUG
+
+        # Apply calibration (offset) and clip to [0,1]
+        logits = np.clip(logits.reshape((len(prompts),*logits.shape[-2:]))+self.model_calib_cte, 0, 1)
 
         # Fuse all logits using the max values
         if len(negative_prompts):
+            # Normalise individual prompts
+            logits[:len(negative_prompts)] = logits[:len(negative_prompts)]/logits[:len(negative_prompts)].max(axis=1).max(axis=1)[:,None,None]
+            # Fuse using their max values
             fused_negative_logits = logits[:len(negative_prompts)].max(axis=0)
         else:
             fused_negative_logits = np.zeros(logits.shape[-2:])
 
         if len(positive_prompts):
+            # Normalise individual prompts
+            logits[-len(positive_prompts):] = logits[-len(positive_prompts):]/logits[-len(positive_prompts):].max(axis=1).max(axis=1)[:,None,None]
+            # Fuse using their max values
             fused_positive_logits = logits[-len(positive_prompts):].max(axis=0)
         else:
             fused_positive_logits = np.zeros(logits.shape[-2:])
 
+        # Final logits will have higher values for the good places to land and lower for the bad ones
         logits = 1 + np.clip(fused_positive_logits-fused_negative_logits, -1, 0)
+
+        positive_heatmap = (cv2.resize(fused_positive_logits, (input_image.shape[1],input_image.shape[0]), cv2.INTER_AREA)*255).astype('uint8')##DEBUG
+        self.positive_img_pub.publish(self.cv_bridge.cv2_to_imgmsg(positive_heatmap*255, encoding='mono8'))##DEBUG
+        negative_heatmap = (cv2.resize(fused_negative_logits, (input_image.shape[1],input_image.shape[0]), cv2.INTER_AREA)*255).astype('uint8')##DEBUG
+        self.negative_img_pub.publish(self.cv_bridge.cv2_to_imgmsg(negative_heatmap*255, encoding='mono8'))##DEBUG
 
         # Blur to smooth the ViT patches
         logits = cv2.blur(logits,(self.blur_kernel_size,self.blur_kernel_size))
@@ -120,7 +140,7 @@ class GenerateLandingHeatmap(Node):
         # returns heatmap as grayscale image
         response.heatmap = self.cv_bridge.cv2_to_imgmsg(logits, encoding='mono8')
 
-        self.debug_img_pub.publish(response.heatmap)##DEBUG
+        # self.debug_img_pub.publish(response.heatmap)##DEBUG
 
         self.get_logger().info('Returning!')
         return response
