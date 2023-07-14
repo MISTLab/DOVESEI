@@ -22,9 +22,10 @@ from geometry_msgs.msg import Twist
 import rclpy
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
+# from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.time import Time, Duration
+from rcl_interfaces.msg import SetParametersResult
 
 from tf2_ros import TransformException
 from tf2_ros.buffer import Buffer
@@ -93,9 +94,9 @@ class LandingModule(Node):
         self.declare_parameter('min_conservative_gain', 0.1)
         img_topic = self.get_parameter('img_topic').value
         depth_topic = self.get_parameter('depth_topic').value
-        self.heatmap_topic = self.get_parameter('heatmap_topic').value
-        self.depth_proj_topic = self.get_parameter('depth_proj_topic').value
-        self.twist_topic = self.get_parameter('twist_topic').value
+        heatmap_topic = self.get_parameter('heatmap_topic').value
+        depth_proj_topic = self.get_parameter('depth_proj_topic').value
+        twist_topic = self.get_parameter('twist_topic').value
         self.mov_avg_size = self.get_parameter('mov_avg_size').value
         self.gain = self.get_parameter('gain').value
         self.z_speed = self.get_parameter('z_speed').value
@@ -114,8 +115,7 @@ class LandingModule(Node):
         self.zero_error_eps = self.get_parameter('zero_error_eps').value
         self.max_landing_time_sec = self.get_parameter('max_landing_time_sec').value
         self.min_conservative_gain = self.get_parameter('min_conservative_gain').value
-        
-
+        self.add_on_set_parameters_callback(self.parameters_callback)
         
         self.mov_avg_counter = 0
 
@@ -141,9 +141,9 @@ class LandingModule(Node):
         self.req = GetLandingHeatmap.Request()
         self.cv_bridge = CvBridge()
                 
-        self.twist_pub = self.create_publisher(Twist, self.twist_topic,1)
-        self.heatmap_pub = self.create_publisher(ImageMsg, self.heatmap_topic,1)
-        self.depth_proj_pub = self.create_publisher(ImageMsg, self.depth_proj_topic,1)
+        self.twist_pub = self.create_publisher(Twist, twist_topic,1)
+        self.heatmap_pub = self.create_publisher(ImageMsg, heatmap_topic,1)
+        self.depth_proj_pub = self.create_publisher(ImageMsg, depth_proj_topic,1)
         self.state_pub = self.create_publisher(String, 'lander_state', 1)
 
         self.tf_trials = 5
@@ -163,6 +163,17 @@ class LandingModule(Node):
 
         self.get_logger().info('Ready to publish some twist messages!')
 
+
+    def parameters_callback(self, params):
+        for param in params:
+            try:
+                var_type = type(getattr(self, param.name))
+                setattr(self, param.name, var_type(param.value))
+                self.get_logger().info(f'Parameter updated: {param.name} = {param.value}')
+            except AttributeError:
+                return SetParametersResult(successful=False)
+        return SetParametersResult(successful=True)
+    
 
     def get_tf(self, t=0.0, timeout=1.0, map_frame="map", target_frame="flying_sensor"):
         """Only needed to grab the altitude so we can simulate 
@@ -288,7 +299,6 @@ class LandingModule(Node):
         xy_idx[:,0] =  (-(xy_idx[:,0] - int(heatmap_center[0]))) / heatmap_center[0]
         xy_idx[:,1] = (xy_idx[:,1] - int(heatmap_center[1])) / heatmap_center[1]
 
-        self.get_logger().debug(f'Publishing resized heatmap image at {self.heatmap_topic}')
         img_msg = self.cv_bridge.cv2_to_imgmsg(heatmap_resized, encoding='mono8')
         self.heatmap_pub.publish(img_msg)
         return xy_idx
@@ -322,7 +332,7 @@ class LandingModule(Node):
         twist.angular.y = 0.0
         twist.angular.z = 0.0
 
-        self.get_logger().info(f'Publishing velocities ({(twist.linear.x, twist.linear.y, twist.linear.z)}) at {self.twist_topic}')
+        self.get_logger().info(f'Publishing velocities ({(twist.linear.x, twist.linear.y, twist.linear.z)})')
         self.twist_pub.publish(twist)
 
 
