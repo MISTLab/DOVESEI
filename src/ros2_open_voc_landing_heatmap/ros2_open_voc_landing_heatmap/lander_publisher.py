@@ -93,9 +93,9 @@ class LandingModule(Node):
         self.declare_parameter('max_landing_time_sec', 5*60)
         self.declare_parameter('min_conservative_gain', 0.1)
         self.declare_parameter('negative_prompts_searching', NEGATIVE_PROMPTS_SEARCHING)
-        self.declare_parameter('negative_prompts_landing',   NEGATIVE_PROMPTS_LANDING)
+        self.declare_parameter('negative_prompts_safe_altitude',   NEGATIVE_PROMPTS_LANDING)
         self.declare_parameter('positive_prompts_searching', POSITIVE_PROMPTS_SEARCHING)
-        self.declare_parameter('positive_prompts_landing',   POSITIVE_PROMPTS_LANDING)
+        self.declare_parameter('positive_prompts_safe_altitude',   POSITIVE_PROMPTS_LANDING)
         img_topic = self.get_parameter('img_topic').value
         depth_topic = self.get_parameter('depth_topic').value
         heatmap_topic = self.get_parameter('heatmap_topic').value
@@ -120,9 +120,9 @@ class LandingModule(Node):
         self.max_landing_time_sec = self.get_parameter('max_landing_time_sec').value
         self.min_conservative_gain = self.get_parameter('min_conservative_gain').value
         self.negative_prompts_searching = self.get_parameter('negative_prompts_searching').value
-        self.negative_prompts_landing = self.get_parameter('negative_prompts_landing').value
+        self.negative_prompts_safe_altitude = self.get_parameter('negative_prompts_safe_altitude').value
         self.positive_prompts_searching = self.get_parameter('positive_prompts_searching').value
-        self.positive_prompts_landing = self.get_parameter('positive_prompts_landing').value
+        self.positive_prompts_safe_altitude = self.get_parameter('positive_prompts_safe_altitude').value
         self.add_on_set_parameters_callback(self.parameters_callback)
 
         self.debug = debug
@@ -384,8 +384,8 @@ class LandingModule(Node):
             # The multiplier 0.8 is to give a margin for the heatmap generation (moving average), mostly on its way up
             # TODO: fix this multiplier hack...
             if self.curr_altitude < self.safe_altitude*0.8:
-                negative_prompts = self.negative_prompts_landing
-                positive_prompts = self.positive_prompts_landing
+                negative_prompts = self.negative_prompts_safe_altitude
+                positive_prompts = self.positive_prompts_safe_altitude
             else:
                 negative_prompts = self.negative_prompts_searching
                 positive_prompts = self.positive_prompts_searching
