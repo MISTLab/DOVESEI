@@ -81,7 +81,7 @@ class LandingModule(Node):
         self.declare_parameter('altitude_landed', 1)
         self.declare_parameter('safe_altitude', 50)
         self.declare_parameter('safety_radius', 2.0)
-        self.declare_parameter('safety_threshold', 0.8)
+        self.declare_parameter('safety_threshold', 0.5)
         self.declare_parameter('giveup_after_sec', 5)
         self.declare_parameter('max_depth_sensing', 20)
         self.declare_parameter('use_random_search4new_place', False)
@@ -248,8 +248,8 @@ class LandingModule(Node):
         the better the place for landing.
         """
         proj = math.tan(FOV/2)*self.curr_altitude
-        heatmap = self.cv_bridge.imgmsg_to_cv2(heatmap_msg, desired_encoding='mono8')
-        
+        heatmap = 2*(self.cv_bridge.imgmsg_to_cv2(heatmap_msg, desired_encoding='mono8')/255)-1
+       
         # Debug
         # heatmap = np.zeros(heatmap.shape, dtype=heatmap.dtype)
         # heatmap[:50,:50] = 255
@@ -269,7 +269,7 @@ class LandingModule(Node):
 
         if self.heatmap_mov_avg is None:
             # like an RGB image so opencv can easily resize it...
-            self.heatmap_mov_avg = np.zeros((resize, resize_w, self.mov_avg_size), dtype='uint8')
+            self.heatmap_mov_avg = np.zeros((resize, resize_w, self.mov_avg_size), dtype=float)
         
         # The resolution of the heatmap changes according to the UAV's safety projection (altitude)
         # Therefore the array used for the moving average needs to be resized as well
@@ -281,7 +281,7 @@ class LandingModule(Node):
         # Add the received heatmap to the moving average array
         self.heatmap_mov_avg[...,self.mov_avg_counter] = heatmap_resized
         # Calculates the average heatmap according to the values stored in the moving average array
-        heatmap_resized = self.heatmap_mov_avg.mean(axis=2).astype('uint8')
+        heatmap_resized = (255*(self.heatmap_mov_avg.mean(axis=2)+1)/2).astype('uint8')
         if self.mov_avg_counter < (self.mov_avg_size-1):
             self.mov_avg_counter += 1
         else:

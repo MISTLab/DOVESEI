@@ -52,6 +52,7 @@ class GenerateLandingHeatmap(Node):
 
         self.positive_img_pub = self.create_publisher(ImageMsg, "/original_heatmap_positive",1) ##DEBUG
         self.negative_img_pub = self.create_publisher(ImageMsg, "/original_heatmap_negative",1) ##DEBUG
+        self.final_img_pub = self.create_publisher(ImageMsg, "/final_heatmap",1) ##DEBUG
 
         self.srv = self.create_service(GetLandingHeatmap, 'generate_landing_heatmap', self.get_landing_heatmap_callback)
         if torch.cuda.is_available(): self.get_logger().warn('generate_landing_heatmap is using cuda!')
@@ -106,7 +107,7 @@ class GenerateLandingHeatmap(Node):
         # Fuse all logits using the max values
         if len(negative_prompts):
             # Normalise individual prompts
-            logits[:len(negative_prompts)] = logits[:len(negative_prompts)]/logits[:len(negative_prompts)].max(axis=1).max(axis=1)[:,None,None]
+            logits[:len(negative_prompts)] = logits[:len(negative_prompts)] / logits[:len(negative_prompts)].max(axis=1).max(axis=1)[:,None,None]
             # Fuse using their max values
             fused_negative_logits = logits[:len(negative_prompts)].max(axis=0)
         else:
@@ -114,14 +115,16 @@ class GenerateLandingHeatmap(Node):
 
         if len(positive_prompts):
             # Normalise individual prompts
-            logits[-len(positive_prompts):] = logits[-len(positive_prompts):]/logits[-len(positive_prompts):].max(axis=1).max(axis=1)[:,None,None]
+            logits[-len(positive_prompts):] = logits[-len(positive_prompts):] / logits[-len(positive_prompts):].max(axis=1).max(axis=1)[:,None,None]
             # Fuse using their max values
             fused_positive_logits = logits[-len(positive_prompts):].max(axis=0)
         else:
             fused_positive_logits = np.zeros(logits.shape[-2:])
 
         # Final logits will have higher values for the good places to land and lower for the bad ones
-        logits = 1 + np.clip(fused_positive_logits-fused_negative_logits, -1, 0)
+        logits = fused_positive_logits - fused_negative_logits
+        logits -= logits.min()
+        logits = logits/logits.max()
 
         positive_heatmap = (cv2.resize(fused_positive_logits, (input_image.shape[1],input_image.shape[0]), cv2.INTER_AREA)*255).astype('uint8')##DEBUG
         positive_heatmap_msg = self.cv_bridge.cv2_to_imgmsg(positive_heatmap*255, encoding='mono8')
@@ -155,6 +158,8 @@ class GenerateLandingHeatmap(Node):
         # returns heatmap as grayscale image
         response.heatmap = self.cv_bridge.cv2_to_imgmsg(logits, encoding='mono8')
         response.heatmap.header.frame_id = input_image_msg.header.frame_id
+
+        self.final_img_pub.publish(response.heatmap)##DEBUG
 
         return response
 
