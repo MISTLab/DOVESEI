@@ -6,7 +6,6 @@ Controls UAV movement and landing approach.
 """
 
 import math
-from threading import Event
 from enum import Enum
 from dataclasses import dataclass
 
@@ -116,7 +115,11 @@ class LandingModule(Node):
         self.max_landing_time_sec = self.get_parameter('max_landing_time_sec').value
         self.min_conservative_gain = self.get_parameter('min_conservative_gain').value
         self.add_on_set_parameters_callback(self.parameters_callback)
-        
+
+        self.heatmap_result = None
+        self.rgbmsg = None
+        self.depthmsg = None
+
         self.mov_avg_counter = 0
 
         self.heatmap_mov_avg = None
@@ -150,7 +153,7 @@ class LandingModule(Node):
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
-        queue_size = 2
+        queue_size = 1
         delay_btw_msgs = 0.02 #TODO: test if this value is causing any problems...
         tss = ApproximateTimeSynchronizer(
             [Subscriber(self, ImageMsg, img_topic),
@@ -171,7 +174,9 @@ class LandingModule(Node):
                 setattr(self, param.name, var_type(param.value))
                 self.get_logger().info(f'Parameter updated: {param.name} = {param.value}')
             except AttributeError:
+                print("ok - AttributeError")
                 return SetParametersResult(successful=False)
+        print("ok")
         return SetParametersResult(successful=True)
     
 
@@ -230,27 +235,19 @@ class LandingModule(Node):
         depth[mask!=255] = 1000
         
         img_msg = self.cv_bridge.cv2_to_imgmsg(depth.astype('uint8'), encoding='mono8')
+        img_msg.header.frame_id = depthmsg.header.frame_id
         self.depth_proj_pub.publish(img_msg)
         return depth[1000>depth].std(),depth[1000>depth].min()
 
 
 
-    def get_xy_error_from_semantics(self, rgbmsg, positive_prompts, negative_prompts):
+    def get_xy_error_from_semantics(self, heatmap_msg):
         """Normalized XY error according to the best place to land defined by the heatmap
         received from the generate_landing_heatmap service
         The heatmap received will be a mono8 image where the higher the value 
         the better the place for landing.
         """
         proj = math.tan(FOV/2)*self.curr_altitude
-        self.get_logger().debug(f'Sending heatmap service request...')
-        response = self.get_heatmap(rgbmsg, positive_prompts, negative_prompts, erosion_size=self.heatmap_mask_erosion)
-        if response is None:
-            self.get_logger().error(f'get_heatmap returned an empty response?!?!')
-            # np.inf won't be easily hidden by another operation and it can be spotted with ~np.isfinite
-            return np.asarray([[np.inf,np.inf]])
-        
-        self.get_logger().debug(f'Heatmap received!')
-        heatmap_msg = response.heatmap
         heatmap = self.cv_bridge.imgmsg_to_cv2(heatmap_msg, desired_encoding='mono8')
         
         # Debug
@@ -299,7 +296,9 @@ class LandingModule(Node):
         xy_idx[:,0] =  (-(xy_idx[:,0] - int(heatmap_center[0]))) / heatmap_center[0]
         xy_idx[:,1] = (xy_idx[:,1] - int(heatmap_center[1])) / heatmap_center[1]
 
-        img_msg = self.cv_bridge.cv2_to_imgmsg(heatmap_resized, encoding='mono8')
+        img_msg = self.cv_bridge.cv2_to_imgmsg(cv2.resize(heatmap_resized,(heatmap_msg.width,heatmap_msg.height), cv2.INTER_NEAREST), 
+                                               encoding='mono8')
+        img_msg.header.frame_id = heatmap_msg.header.frame_id
         self.heatmap_pub.publish(img_msg)
         return xy_idx
 
@@ -352,51 +351,75 @@ class LandingModule(Node):
 
 
     def sense_and_act(self, rgbmsg, depthmsg):
-        # Beware: spaghetti-code state machine below!
-        curr_time_sec = self.get_clock().now().nanoseconds/1E9
-        delta_t_sec = curr_time_sec - self.prev_time_sec
-        if delta_t_sec == 0:
-            return
-        self.prev_time_sec = curr_time_sec
-        elapsed_time_sec = curr_time_sec-self.init_time_sec
+        if self.heatmap_result is None:
+            # Beware: spaghetti-code state machine below!
+            curr_time_sec = self.get_clock().now().nanoseconds/1E9
+            delta_t_sec = curr_time_sec - self.prev_time_sec
+            if delta_t_sec == 0:
+                return
+            self.prev_time_sec = curr_time_sec
+            elapsed_time_sec = curr_time_sec-self.init_time_sec
 
-        self.curr_altitude = self.get_altitude()
-        if self.curr_altitude is None:
-            return
+            self.curr_altitude = self.get_altitude()
+            if self.curr_altitude is None:
+                return
+            
+            if self.curr_altitude >= self.safe_altitude:
+                self.landing_status.is_safe = True
+            else:
+                self.landing_status.is_safe = False
+                self.get_logger().warn(f"Safe altitude breached, no movements allowed on XY!")
+
+            # We have two sets of prompts used to generate the landing heatmap
+            # One set (PROMPTS_SEARCHING) is used when the UAV is flying above any obstacle (safety information previously known)
+            # and it's searching for a place to land
+            # The multiplier 0.8 is to give a margin for the heatmap generation (moving average), mostly on its way up
+            # TODO: fix this multiplier hack...
+            if self.curr_altitude < self.safe_altitude*0.8:
+                negative_prompts = NEGATIVE_PROMPTS_LANDING
+                positive_prompts = POSITIVE_PROMPTS_LANDING
+            else:
+                negative_prompts = NEGATIVE_PROMPTS_SEARCHING
+                positive_prompts = POSITIVE_PROMPTS_SEARCHING
+            self.get_logger().info(f"Current prompts: {negative_prompts}, {positive_prompts}")
+
+            # The conservative_gain is a very simple (hacky?) way to force the system to relax its decisions as time passes 
+            # because at the end of the day it will be limited by its battery and the worst scenario is to fall from the sky
+            conservative_gain = 1-np.exp(1-self.max_landing_time_sec/elapsed_time_sec)
+            self.conservative_gain = conservative_gain if conservative_gain > self.min_conservative_gain else self.min_conservative_gain
+            self.get_logger().info(f'Elapsed time [s]: {elapsed_time_sec} (curr. loop freq. {1/delta_t_sec:.2f}Hz) - Conservative gain: {self.conservative_gain}')
         
-        if self.curr_altitude >= self.safe_altitude:
-            self.landing_status.is_safe = True
-        else:
-            self.landing_status.is_safe = False
-            self.get_logger().warn(f"Safe altitude breached, no movements allowed on XY!")
+            depth_std, depth_min = self.get_depth_stats(depthmsg)
+            self.get_logger().info(f"Depth STD, MIN: {depth_std:.2f},{depth_min:.2f}")
 
-        # We have two sets of prompts used to generate the landing heatmap
-        # One set (PROMPTS_SEARCHING) is used when the UAV is flying above any obstacle (safety information previously known)
-        # and it's searching for a place to land
-        # The multiplier 0.8 is to give a margin for the heatmap generation (moving average), mostly on its way up
-        # TODO: fix this multiplier hack...
-        if self.curr_altitude < self.safe_altitude*0.8:
-            negative_prompts = NEGATIVE_PROMPTS_LANDING
-            positive_prompts = POSITIVE_PROMPTS_LANDING
-        else:
-            negative_prompts = NEGATIVE_PROMPTS_SEARCHING
-            positive_prompts = POSITIVE_PROMPTS_SEARCHING
-        self.get_logger().info(f"Current prompts: {negative_prompts}, {positive_prompts}")
 
-        # The conservative_gain is a very simple (hacky?) way to force the system to relax its decisions as time passes 
-        # because at the end of the day it will be limited by its battery and the worst scenario is to fall from the sky
-        conservative_gain = 1-np.exp(1-self.max_landing_time_sec/elapsed_time_sec)
-        self.conservative_gain = conservative_gain if conservative_gain > self.min_conservative_gain else self.min_conservative_gain
-        self.get_logger().info(f'Elapsed time [s]: {elapsed_time_sec} (curr. loop freq. {1/delta_t_sec:.2f}Hz) - Conservative gain: {self.conservative_gain}')
-      
-        depth_std, depth_min = self.get_depth_stats(depthmsg)
-        self.get_logger().info(f"Depth STD, MIN: {depth_std:.2f},{depth_min:.2f}")
-        
-        xy_err = self.get_xy_error_from_semantics(rgbmsg, positive_prompts, negative_prompts)
+            #TODO: research a solution to sync service call and received messages better than this...
+            #request.image, request.positive_prompts, request.negative_prompts, request.erosion_size
+            self.req.image = rgbmsg
+            # the service expects a string of prompts separated by ';'
+            self.req.positive_prompts = ";".join(positive_prompts)
+            self.req.negative_prompts = ";".join(negative_prompts)
+            self.req.erosion_size = int(self.heatmap_mask_erosion)
+            self.req.safety_threshold = self.safety_threshold*float(self.conservative_gain)
+
+            def future_done_callback(future):
+                heatmap_msg = future.result().heatmap
+                x,y,z = self.state_update(curr_time_sec, heatmap_msg, depth_std, depth_min)
+                self.publish_status()
+                self.publish_twist(x,y,z)
+                self.heatmap_result = None
+
+            self.heatmap_result = self.cli.call_async(self.req)
+            self.heatmap_result.add_done_callback(future_done_callback)
+
+            return
+
+
+    def state_update(self, curr_time_sec, heatmap_msg, depth_std, depth_min):
+        xy_err = self.get_xy_error_from_semantics(heatmap_msg)
         xs_err = xy_err[0,0]
         ys_err = xy_err[0,1]
         self.get_logger().info(f"Segmentation X,Y ERR: {xs_err:.2f},{ys_err:.2f}")
-
         # Very rudimentary filter
         xs_err = xs_err if abs(xs_err) > self.zero_error_eps else 0.0
         ys_err = ys_err if abs(ys_err) > self.zero_error_eps else 0.0
@@ -466,34 +489,8 @@ class LandingModule(Node):
         elif self.landing_status.state == LandingState.RESTARTING:
             x,y = self.search4new_place_direction
             z = 0.0
-       
-        self.publish_status()
-        self.publish_twist(x,y,z)
 
-
-        
-
-    def get_heatmap(self, image_msg, positive_prompts, negative_prompts, erosion_size):
-        #TODO: research a solution and fix service callback hack (I think Galactic is the problem... but I am not sure)
-
-        #request.image, request.positive_prompts, request.negative_prompts, request.erosion_size
-        self.req.image = image_msg
-        # the service expects a string of prompts separated by ';'
-        self.req.positive_prompts = ";".join(positive_prompts)
-        self.req.negative_prompts = ";".join(negative_prompts)
-        self.req.erosion_size = int(erosion_size)
-        self.req.safety_threshold = self.safety_threshold*float(self.conservative_gain)
-
-        event = Event()
-        def future_done_callback(future):
-            event.set()
-        
-        future = self.cli.call_async(self.req)
-        future.add_done_callback(future_done_callback)
-        
-        event.wait(timeout=5)
-
-        return future.result()
+        return x,y,z
 
 
     def on_shutdown_cb(self):
@@ -503,21 +500,29 @@ class LandingModule(Node):
         self.get_logger().error('Shutting down... sending zero velocities!')
 
 
-def main(args=None):
-    rclpy.init(args=args)
+def main():
+    rclpy.init()
     landing_module = LandingModule()
-    executor = MultiThreadedExecutor(num_threads=2)
-    executor.add_node(landing_module)
     try:
-        executor.spin()
-
+        rclpy.spin(landing_module)
     except KeyboardInterrupt:
         pass
-
     finally:
         landing_module.on_shutdown_cb()
-        executor.shutdown()
-        landing_module.destroy_node()
+        rclpy.shutdown()
+
+    # executor = MultiThreadedExecutor(num_threads=2)
+    # executor.add_node(landing_module)
+    # try:
+    #     executor.spin()
+
+    # except KeyboardInterrupt:
+    #     pass
+
+    # finally:
+    #     landing_module.on_shutdown_cb()
+    #     executor.shutdown()
+    #     landing_module.destroy_node()
 
 
 if __name__ == '__main__':
