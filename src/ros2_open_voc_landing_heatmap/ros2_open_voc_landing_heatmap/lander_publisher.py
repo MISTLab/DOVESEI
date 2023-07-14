@@ -42,10 +42,10 @@ from cv_bridge import CvBridge
 # semantic sementation because the second doesn't need a precise projection
 FOV = math.radians(73) #TODO: get this from the camera topic...
 
-NEGATIVE_PROMPTS_SEARCHING = ["building", "house", "roof", "asphalt", "tree", "road", "water", "wall", "fence", "transmission lines", "lamp post", "vehicle", "people"]
-POSITIVE_PROMPTS_SEARCHING = ["grass", "field"]
-NEGATIVE_PROMPTS_LANDING= ["vehicle", "people"]
-POSITIVE_PROMPTS_LANDING= ["grass", "field"]
+NEGATIVE_PROMPTS_SEARCHING = "building; house; roof; asphalt; tree; road; water; wall; fence; transmission lines; lamp post; vehicle; people"
+POSITIVE_PROMPTS_SEARCHING = "grass; field"
+NEGATIVE_PROMPTS_LANDING= "vehicle; people"
+POSITIVE_PROMPTS_LANDING= "grass; field"
 
 
 class LandingState(Enum):
@@ -405,8 +405,8 @@ class LandingModule(Node):
             #request.image, request.positive_prompts, request.negative_prompts, request.erosion_size
             self.req.image = rgbmsg
             # the service expects a string of prompts separated by ';'
-            self.req.positive_prompts = ";".join(positive_prompts)
-            self.req.negative_prompts = ";".join(negative_prompts)
+            self.req.positive_prompts = positive_prompts
+            self.req.negative_prompts = negative_prompts
             self.req.erosion_size = int(self.heatmap_mask_erosion)
             self.req.safety_threshold = self.safety_threshold*float(self.conservative_gain)
 
