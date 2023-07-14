@@ -16,11 +16,11 @@ else:
 from ros2_open_voc_landing_heatmap_srv.srv import GetLandingHeatmap
 import rclpy
 from rclpy.node import Node
+from rcl_interfaces.msg import SetParametersResult
 from cv_bridge import CvBridge
 
 
 CLIPSEG_OUTPUT_SIZE = 352
-PROMPT_ENGINEERING = "3D rendered image of {}, animation, game"
 
 class GenerateLandingHeatmap(Node):
 
@@ -28,10 +28,12 @@ class GenerateLandingHeatmap(Node):
         super().__init__('generate_landing_heatmap')
         self.declare_parameter('model_calib_cte', 0.0)
         self.declare_parameter('blur_kernel_size', 15)
-        #self.add_on_set_parameters_callback(self.parameters_callback)
+        self.declare_parameter('prompt_engineering', "3D rendered image of {}, animation, game")
+        self.add_on_set_parameters_callback(self.parameters_callback)
 
         self.model_calib_cte = self.get_parameter('model_calib_cte').value
         self.blur_kernel_size = self.get_parameter('blur_kernel_size').value
+        self.prompt_engineering = self.get_parameter('prompt_engineering').value
 
         # Generate the distance matrix (based on the output size of CLIPSeg - CLIPSEG_OUTPUT_SIZE)
         # It has the distance from the centre of the matrix
@@ -55,17 +57,30 @@ class GenerateLandingHeatmap(Node):
         if torch.cuda.is_available(): self.get_logger().warn('generate_landing_heatmap is using cuda!')
         self.get_logger().info('generate_landing_heatmap is up and running!')
 
+
+    def parameters_callback(self, params):
+        for param in params:
+            try:
+                var_type = type(getattr(self, param.name))
+                setattr(self, param.name, var_type(param.value))
+                self.get_logger().info(f'Parameter updated: {param.name} = {param.value}')
+            except AttributeError:
+                return SetParametersResult(successful=False)
+        return SetParametersResult(successful=True)
+        
+    
+
     def get_landing_heatmap_callback(self, request, response):
         # Inputs: request.image, request.prompts, request.erosion_size
         # Outputs: response.heatmap, response.success
 
-        self.get_logger().info('New request received!')
+        self.get_logger().debug('New heatmap request received!')
 
         input_image = self.cv_bridge.imgmsg_to_cv2(request.image, desired_encoding='rgb8')
         negative_prompts = request.negative_prompts.split(';')
         positive_prompts = request.positive_prompts.split(';')
         prompts = negative_prompts + positive_prompts
-        prompts = [PROMPT_ENGINEERING.format(p) for p in prompts]
+        prompts = [self.prompt_engineering.format(p) for p in prompts]
         erosion_size = request.erosion_size
         safety_threshold = request.safety_threshold
 
@@ -83,11 +98,6 @@ class GenerateLandingHeatmap(Node):
                     inputs[k] = inputs[k]
             logits = model(**inputs).logits
             logits = logits.softmax(dim=1).detach().cpu().numpy()
-        
-        # original_heatmap = np.clip(logits.max(axis=0),0,1)
-        # original_heatmap = original_heatmap/original_heatmap.max()
-        # original_heatmap = (cv2.resize(original_heatmap, (input_image.shape[1],input_image.shape[0]), cv2.INTER_AREA)*255).astype('uint8')##DEBUG
-        # self.debug_img_pub.publish(self.cv_bridge.cv2_to_imgmsg(original_heatmap, encoding='mono8'))##DEBUG
 
         # Apply calibration (offset) and clip to [0,1]
         logits = np.clip(logits.reshape((len(prompts),*logits.shape[-2:]))+self.model_calib_cte, 0, 1)
@@ -140,9 +150,6 @@ class GenerateLandingHeatmap(Node):
         # returns heatmap as grayscale image
         response.heatmap = self.cv_bridge.cv2_to_imgmsg(logits, encoding='mono8')
 
-        # self.debug_img_pub.publish(response.heatmap)##DEBUG
-
-        self.get_logger().info('Returning!')
         return response
 
 
