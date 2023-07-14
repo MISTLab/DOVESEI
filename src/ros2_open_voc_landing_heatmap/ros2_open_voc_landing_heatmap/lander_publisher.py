@@ -5,6 +5,7 @@ Uses semantic segmentation and depth data to detect safe landing zones.
 Controls UAV movement and landing approach.
 """
 
+import sys
 import math
 from enum import Enum
 from dataclasses import dataclass
@@ -42,9 +43,9 @@ from cv_bridge import CvBridge
 FOV = math.radians(73) #TODO: get this from the camera topic...
 
 NEGATIVE_PROMPTS_SEARCHING = ["building", "house", "roof", "asphalt", "tree", "road", "water", "wall", "fence", "transmission lines", "lamp post", "vehicle", "people"]
-POSITIVE_PROMPTS_SEARCHING = ["grass", "field", "sand"]
+POSITIVE_PROMPTS_SEARCHING = ["grass", "field"]
 NEGATIVE_PROMPTS_LANDING= ["vehicle", "people"]
-POSITIVE_PROMPTS_LANDING= ["grass", "field", "sand"]
+POSITIVE_PROMPTS_LANDING= ["grass", "field"]
 
 
 class LandingState(Enum):
@@ -66,7 +67,7 @@ class LandingStatus:
 
 class LandingModule(Node):
 
-    def __init__(self):
+    def __init__(self, debug=False):
         super().__init__('landing_module')
         self.declare_parameter('img_topic', '/carla/flying_sensor/rgb_down/image')
         self.declare_parameter('depth_topic', '/carla/flying_sensor/depth_down/image')
@@ -91,6 +92,10 @@ class LandingModule(Node):
         self.declare_parameter('zero_error_eps', 0.001)
         self.declare_parameter('max_landing_time_sec', 5*60)
         self.declare_parameter('min_conservative_gain', 0.1)
+        self.declare_parameter('negative_prompts_searching', NEGATIVE_PROMPTS_SEARCHING)
+        self.declare_parameter('negative_prompts_landing',   NEGATIVE_PROMPTS_LANDING)
+        self.declare_parameter('positive_prompts_searching', POSITIVE_PROMPTS_SEARCHING)
+        self.declare_parameter('positive_prompts_landing',   POSITIVE_PROMPTS_LANDING)
         img_topic = self.get_parameter('img_topic').value
         depth_topic = self.get_parameter('depth_topic').value
         heatmap_topic = self.get_parameter('heatmap_topic').value
@@ -114,7 +119,13 @@ class LandingModule(Node):
         self.zero_error_eps = self.get_parameter('zero_error_eps').value
         self.max_landing_time_sec = self.get_parameter('max_landing_time_sec').value
         self.min_conservative_gain = self.get_parameter('min_conservative_gain').value
+        self.negative_prompts_searching = self.get_parameter('negative_prompts_searching').value
+        self.negative_prompts_landing = self.get_parameter('negative_prompts_landing').value
+        self.positive_prompts_searching = self.get_parameter('positive_prompts_searching').value
+        self.positive_prompts_landing = self.get_parameter('positive_prompts_landing').value
         self.add_on_set_parameters_callback(self.parameters_callback)
+
+        self.debug = debug
 
         self.heatmap_result = None
         self.rgbmsg = None
@@ -172,11 +183,9 @@ class LandingModule(Node):
             try:
                 var_type = type(getattr(self, param.name))
                 setattr(self, param.name, var_type(param.value))
-                self.get_logger().info(f'Parameter updated: {param.name} = {param.value}')
+                self.get_logger().warn(f'Parameter updated: {param.name} = {param.value}')
             except AttributeError:
-                print("ok - AttributeError")
                 return SetParametersResult(successful=False)
-        print("ok")
         return SetParametersResult(successful=True)
     
 
@@ -312,7 +321,7 @@ class LandingModule(Node):
         return init_pos[2]
     
 
-    def publish_twist(self, x, y, z, debug=False):
+    def publish_twist(self, x, y, z):
         twist = Twist()
         # The UAV's maximum bank angle is limited to a very small value
         # and this is why such a simple control works.
@@ -322,7 +331,8 @@ class LandingModule(Node):
         twist.linear.y = float(-y * self.gain)
         twist.linear.z = float(z)
         
-        if debug:
+        if self.debug:
+            self.get_logger().error("Debug mode active: publishing zero velocities!")
             twist.linear.x = twist.linear.y = twist.linear.z = 0.0 ##DEBUG
         
         twist.angular.x = 0.0
@@ -374,11 +384,11 @@ class LandingModule(Node):
             # The multiplier 0.8 is to give a margin for the heatmap generation (moving average), mostly on its way up
             # TODO: fix this multiplier hack...
             if self.curr_altitude < self.safe_altitude*0.8:
-                negative_prompts = NEGATIVE_PROMPTS_LANDING
-                positive_prompts = POSITIVE_PROMPTS_LANDING
+                negative_prompts = self.negative_prompts_landing
+                positive_prompts = self.positive_prompts_landing
             else:
-                negative_prompts = NEGATIVE_PROMPTS_SEARCHING
-                positive_prompts = POSITIVE_PROMPTS_SEARCHING
+                negative_prompts = self.negative_prompts_searching
+                positive_prompts = self.positive_prompts_searching
             self.get_logger().info(f"Current prompts: {negative_prompts}, {positive_prompts}")
 
             # The conservative_gain is a very simple (hacky?) way to force the system to relax its decisions as time passes 
@@ -499,8 +509,12 @@ class LandingModule(Node):
 
 
 def main():
+    debug = False
+    if len(sys.argv)>1:
+        if "debug" in sys.argv[1]:
+            debug = True
     rclpy.init()
-    landing_module = LandingModule()
+    landing_module = LandingModule(debug)
     try:
         rclpy.spin(landing_module)
     except KeyboardInterrupt:
