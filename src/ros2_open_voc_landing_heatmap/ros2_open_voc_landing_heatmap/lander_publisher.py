@@ -295,9 +295,7 @@ class LandingModule(Node):
         # Change from image coordinates to normalized coordinates in relation to the centre of the image
         xy_idx[:,0] =  (-(xy_idx[:,0] - int(heatmap_center[0]))) / heatmap_center[0]
         xy_idx[:,1] = (xy_idx[:,1] - int(heatmap_center[1])) / heatmap_center[1]
-
-        img_msg = self.cv_bridge.cv2_to_imgmsg(cv2.resize(heatmap_resized,(heatmap_msg.width,heatmap_msg.height), cv2.INTER_NEAREST), 
-                                               encoding='mono8')
+        img_msg = self.cv_bridge.cv2_to_imgmsg(heatmap_resized, encoding='mono8')
         img_msg.header.frame_id = heatmap_msg.header.frame_id
         self.heatmap_pub.publish(img_msg)
         return xy_idx

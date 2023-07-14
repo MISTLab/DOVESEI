@@ -154,6 +154,7 @@ class GenerateLandingHeatmap(Node):
         
         # returns heatmap as grayscale image
         response.heatmap = self.cv_bridge.cv2_to_imgmsg(logits, encoding='mono8')
+        response.heatmap.header.frame_id = input_image_msg.header.frame_id
 
         return response
 
