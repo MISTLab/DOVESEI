@@ -331,16 +331,15 @@ class LandingModule(Node):
         twist.linear.y = float(-y * self.gain)
         twist.linear.z = float(z)
         
-        if self.debug:
-            self.get_logger().error("Debug mode active: publishing zero velocities!")
-            twist.linear.x = twist.linear.y = twist.linear.z = 0.0 ##DEBUG
-        
         twist.angular.x = 0.0
         twist.angular.y = 0.0
         twist.angular.z = 0.0
 
-        self.get_logger().info(f'Publishing velocities ({(twist.linear.x, twist.linear.y, twist.linear.z)})')
-        self.twist_pub.publish(twist)
+        if not self.debug:
+            self.get_logger().info(f'Publishing velocities ({(twist.linear.x, twist.linear.y, twist.linear.z)})')
+            self.twist_pub.publish(twist)
+        else:
+            self.get_logger().error("Debug mode active: no velocities published!")
 
 
     def publish_status(self):
