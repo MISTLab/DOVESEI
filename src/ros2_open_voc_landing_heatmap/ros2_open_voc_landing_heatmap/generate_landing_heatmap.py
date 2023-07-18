@@ -79,8 +79,8 @@ class GenerateLandingHeatmap(Node):
 
         input_image_msg = request.image
         input_image = self.cv_bridge.imgmsg_to_cv2(input_image_msg, desired_encoding='rgb8')
-        negative_prompts = request.negative_prompts.split(';')
-        positive_prompts = request.positive_prompts.split(';')
+        negative_prompts = [w for w in request.negative_prompts.split(';') if len(w)]
+        positive_prompts = [w for w in request.positive_prompts.split(';') if len(w)]
         prompts = negative_prompts + positive_prompts
         prompts = [self.prompt_engineering.format(p) for p in prompts]
         erosion_size = request.erosion_size
