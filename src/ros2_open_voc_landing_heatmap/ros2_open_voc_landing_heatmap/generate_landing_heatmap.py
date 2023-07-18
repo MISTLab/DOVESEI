@@ -86,9 +86,9 @@ class GenerateLandingHeatmap(Node):
         erosion_size = request.erosion_size
         safety_threshold = request.safety_threshold
 
-        element = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, 
-                                            (2 * erosion_size + 1, 2 * erosion_size + 1),
-                                            (erosion_size, erosion_size))
+        # element = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, 
+        #                                     (2 * erosion_size + 1, 2 * erosion_size + 1),
+        #                                     (erosion_size, erosion_size))
 
         with torch.inference_mode():
             # TODO: recycle old prompts to avoid encoding the same prompts multiple times...
@@ -141,10 +141,10 @@ class GenerateLandingHeatmap(Node):
         # Creates a mask of the best places to land
         logits = (logits>safety_threshold).astype('float32')
     
-        logits = cv2.erode(logits, element)
+        #logits = cv2.erode(logits, element)
 
         # Apply the distance gradient
-        logits = logits*self.final_dists
+        # logits = logits*self.final_dists
 
         # Finally, resize to match input image (CLIPSeg resizes without keeping the proportions)
         logits = cv2.resize(logits, (input_image.shape[1],input_image.shape[0]), cv2.INTER_AREA)
