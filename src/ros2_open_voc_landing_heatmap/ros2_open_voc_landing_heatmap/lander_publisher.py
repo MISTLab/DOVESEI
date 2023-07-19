@@ -505,6 +505,8 @@ class LandingModule(Node):
         elif self.giveup_landing_timer == 0:
             if is_clear_dynamic_decision and is_collision_free_dynamic_decision and is_flat_dynamic_decision:
                 self.landing_status.state = LandingState.LANDING
+            elif self.landing_status.is_safe:
+                self.landing_status.state = LandingState.SEARCHING
             elif self.landing_status.state != LandingState.SEARCHING:
                 self.giveup_landing_timer = curr_time_sec
                 self.landing_status.state = LandingState.WAITING
