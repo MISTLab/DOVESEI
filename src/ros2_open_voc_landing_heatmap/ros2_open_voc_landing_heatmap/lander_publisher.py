@@ -465,7 +465,7 @@ class LandingModule(Node):
 
 
     def state_update(self, curr_time_sec, heatmap_msg, depth_std, depth_min):
-        estimated_travelled_distance = self.z_speed/self.landing_status.delta_time_sec # TODO:improve this estimation or add some extra margin
+        estimated_travelled_distance = self.z_speed*self.landing_status.delta_time_sec # TODO:improve this estimation or add some extra margin
         altitude_landed_dynamic = self.altitude_landed if self.altitude_landed > estimated_travelled_distance else estimated_travelled_distance
         landed_trigger = self.landing_status.altitude <= altitude_landed_dynamic
         xy_err = self.get_xy_error_from_semantics(heatmap_msg)
