@@ -42,10 +42,8 @@ from cv_bridge import CvBridge
 # semantic sementation because the second doesn't need a precise projection
 FOV = math.radians(73) #TODO: get this from the camera topic...
 
-NEGATIVE_PROMPTS_SEARCHING = "building; house; roof; asphalt; tree; road; water; wall; fence; transmission lines; lamp post; vehicle; people"
-POSITIVE_PROMPTS_SEARCHING = "grass; field"
-NEGATIVE_PROMPTS_LANDING= "vehicle; people"
-POSITIVE_PROMPTS_LANDING= "grass; field"
+NEGATIVE_PROMPTS = "building; house; roof; tree; road; water; fence; transmission lines; lamp post; vehicle; people"
+POSITIVE_PROMPTS = "grass"
 
 
 class LandingState(Enum):
@@ -88,7 +86,6 @@ class LandingModule(Node):
         self.declare_parameter('altitude_landed', 1)
         self.declare_parameter('safe_altitude', 50)
         self.declare_parameter('safety_radius', 2.0)
-        self.declare_parameter('safety_threshold', 0.5)
         self.declare_parameter('giveup_after_sec', 5)
         self.declare_parameter('max_depth_sensing', 20)
         self.declare_parameter('use_random_search4new_place', False)
@@ -98,10 +95,8 @@ class LandingModule(Node):
         self.declare_parameter('zero_error_eps', 0.1)
         self.declare_parameter('max_landing_time_sec', 5*60)
         self.declare_parameter('min_conservative_gain', 0.1)
-        self.declare_parameter('negative_prompts_searching', NEGATIVE_PROMPTS_SEARCHING)
-        self.declare_parameter('negative_prompts_safe_altitude',   NEGATIVE_PROMPTS_LANDING)
-        self.declare_parameter('positive_prompts_searching', POSITIVE_PROMPTS_SEARCHING)
-        self.declare_parameter('positive_prompts_safe_altitude',   POSITIVE_PROMPTS_LANDING)
+        self.declare_parameter('negative_prompts', NEGATIVE_PROMPTS)
+        self.declare_parameter('positive_prompts', POSITIVE_PROMPTS)
         img_topic = self.get_parameter('img_topic').value
         depth_topic = self.get_parameter('depth_topic').value
         heatmap_topic = self.get_parameter('heatmap_topic').value
@@ -115,7 +110,6 @@ class LandingModule(Node):
         self.altitude_landed = self.get_parameter('altitude_landed').value
         self.safe_altitude = self.get_parameter('safe_altitude').value
         self.safety_radius = self.get_parameter('safety_radius').value
-        self.safety_threshold = self.get_parameter('safety_threshold').value
         self.giveup_after_sec = self.get_parameter('giveup_after_sec').value
         self.max_depth_sensing = self.get_parameter('max_depth_sensing').value
         self.use_random_search4new_place = self.get_parameter('use_random_search4new_place').value
@@ -125,10 +119,8 @@ class LandingModule(Node):
         self.zero_error_eps = self.get_parameter('zero_error_eps').value
         self.max_landing_time_sec = self.get_parameter('max_landing_time_sec').value
         self.min_conservative_gain = self.get_parameter('min_conservative_gain').value
-        self.negative_prompts_searching = self.get_parameter('negative_prompts_searching').value
-        self.negative_prompts_safe_altitude = self.get_parameter('negative_prompts_safe_altitude').value
-        self.positive_prompts_searching = self.get_parameter('positive_prompts_searching').value
-        self.positive_prompts_safe_altitude = self.get_parameter('positive_prompts_safe_altitude').value
+        self.negative_prompts = self.get_parameter('negative_prompts').value
+        self.positive_prompts = self.get_parameter('positive_prompts').value
         self.add_on_set_parameters_callback(self.parameters_callback)
 
         assert self.min_conservative_gain > 0, "Min conservative time must be bigger than zero!"
@@ -266,7 +258,7 @@ class LandingModule(Node):
         The heatmap received will be a mono8 image where the higher the value 
         the better the place for landing.
         """
-        heatmap = self.cv_bridge.imgmsg_to_cv2(heatmap_msg, desired_encoding='mono8')/255
+        heatmap = self.cv_bridge.imgmsg_to_cv2(heatmap_msg, desired_encoding='mono8')
        
         # Debug
         # heatmap = np.zeros(heatmap.shape, dtype=heatmap.dtype)
@@ -291,7 +283,7 @@ class LandingModule(Node):
         # Add the received heatmap to the moving average array
         self.heatmap_mov_avg[...,self.mov_avg_counter] = heatmap_resized
         # Calculates the average heatmap according to the values stored in the moving average array
-        heatmap_resized = (255*(self.heatmap_mov_avg.mean(axis=2)+1)/2).astype('uint8')
+        heatmap_resized = (self.heatmap_mov_avg.mean(axis=2)).astype('uint8')
         if self.mov_avg_counter < (self.mov_avg_size-1):
             self.mov_avg_counter += 1
         else:
@@ -434,18 +426,8 @@ class LandingModule(Node):
             else:
                 self.landing_status.is_safe = False
 
-            # We have two sets of prompts used to generate the landing heatmap
-            # One set (PROMPTS_SEARCHING) is used when the UAV is flying above any obstacle (safety information previously known)
-            # and it's searching for a place to land
-            # The multiplier 0.8 is to give a margin for the heatmap generation (moving average), mostly on its way up
-            # TODO: fix this multiplier hack...
-            if self.landing_status.altitude < self.safe_altitude*0.8:
-                negative_prompts = self.negative_prompts_safe_altitude
-                positive_prompts = self.positive_prompts_safe_altitude
-            else:
-                negative_prompts = self.negative_prompts_searching
-                positive_prompts = self.positive_prompts_searching
-            self.get_logger().info(f"Current prompts: {negative_prompts}, {positive_prompts}")
+            negative_prompts = self.negative_prompts
+            positive_prompts = self.positive_prompts
 
             # The conservative_gain is a very simple (hacky?) way to force the system to relax its decisions as time passes 
             # because at the end of the day it will be limited by its battery and the worst scenario is to fall from the sky
@@ -466,7 +448,6 @@ class LandingModule(Node):
             self.req.positive_prompts = positive_prompts
             self.req.negative_prompts = negative_prompts
             self.req.erosion_size = int(self.heatmap_mask_erosion)
-            self.req.safety_threshold = self.safety_threshold
 
             def future_done_callback(future):
                 heatmap_msg = future.result().heatmap
