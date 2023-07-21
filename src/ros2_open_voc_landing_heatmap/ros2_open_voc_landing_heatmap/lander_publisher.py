@@ -89,7 +89,7 @@ class LandingModule(Node):
         self.declare_parameter('heatmap_topic', '/heatmap')
         self.declare_parameter('depth_proj_topic', '/depth_proj')
         self.declare_parameter('twist_topic', '/quadctrl/flying_sensor/ctrl_twist_sp')
-        self.declare_parameter('mov_avg_size', 20)
+        self.declare_parameter('beta', 1/20)
         self.declare_parameter('gain', 20)
         self.declare_parameter('z_speed', 3.0)
         self.declare_parameter('depth_smoothness', 0.5) # CARLA's values oscillate on flat surfaces
@@ -106,6 +106,7 @@ class LandingModule(Node):
         self.declare_parameter('zero_error_eps', 0.1)
         self.declare_parameter('max_landing_time_sec', 5*60)
         self.declare_parameter('min_conservative_gain', 0.1)
+        self.declare_parameter('sensor_warm_up_cycles', 10)
         self.declare_parameter('negative_prompts', NEGATIVE_PROMPTS)
         self.declare_parameter('positive_prompts', POSITIVE_PROMPTS)
         img_topic = self.get_parameter('img_topic').value
@@ -113,7 +114,7 @@ class LandingModule(Node):
         heatmap_topic = self.get_parameter('heatmap_topic').value
         depth_proj_topic = self.get_parameter('depth_proj_topic').value
         twist_topic = self.get_parameter('twist_topic').value
-        self.mov_avg_size = self.get_parameter('mov_avg_size').value
+        self.beta = self.get_parameter('beta').value
         self.gain = self.get_parameter('gain').value
         self.z_speed = self.get_parameter('z_speed').value
         self.depth_smoothness = self.get_parameter('depth_smoothness').value
@@ -130,6 +131,7 @@ class LandingModule(Node):
         self.zero_error_eps = self.get_parameter('zero_error_eps').value
         self.max_landing_time_sec = self.get_parameter('max_landing_time_sec').value
         self.min_conservative_gain = self.get_parameter('min_conservative_gain').value
+        self.sensor_warm_up_cycles = self.get_parameter('sensor_warm_up_cycles').value
         self.negative_prompts = self.get_parameter('negative_prompts').value
         self.positive_prompts = self.get_parameter('positive_prompts').value
         self.add_on_set_parameters_callback(self.parameters_callback)
@@ -146,7 +148,7 @@ class LandingModule(Node):
 
         self.mov_avg_counter = 0
 
-        self.heatmap_mov_avg = None
+        self.heatmap_filtered = None
 
         self.img_msg = None
 
@@ -263,7 +265,7 @@ class LandingModule(Node):
 
 
 
-    def get_xy_error_from_semantics(self, heatmap_msg, beta = 0.1):
+    def get_xy_error_from_semantics(self, heatmap_msg):
         """Normalized XY error according to the best place to land defined by the heatmap
         received from the generate_landing_heatmap service
         The heatmap received will be a mono8 image where the higher the value 
@@ -281,21 +283,15 @@ class LandingModule(Node):
         resize_w = int(resize_h*(heatmap.shape[1]/heatmap.shape[0]))
         resize_w = resize_w + 1-(resize_w % 2) # always odd
 
-        if self.heatmap_mov_avg is None:
-            # like an RGB image so opencv can easily resize it...
-            self.heatmap_mov_avg = np.ones((resize_h, resize_w, self.mov_avg_size), dtype=float)
+        if self.heatmap_filtered is None:
+            self.heatmap_filtered = np.zeros((resize_h, resize_w), dtype=float)
         
         heatmap_resized = cv2.resize(heatmap,
-                                     (self.heatmap_mov_avg.shape[1],self.heatmap_mov_avg.shape[0]),cv2.INTER_AREA)
+                                     (self.heatmap_filtered.shape[1],self.heatmap_filtered.shape[0]),cv2.INTER_AREA)
 
         # Add the received heatmap to the moving average array
-        self.heatmap_mov_avg[...,self.mov_avg_counter] = heatmap_resized
-        # Calculates the average heatmap according to the values stored in the moving average array
-        heatmap_resized = (self.heatmap_mov_avg.mean(axis=2)).astype('uint8')
-        if self.mov_avg_counter < (self.mov_avg_size-1):
-            self.mov_avg_counter += 1
-        else:
-            self.mov_avg_counter = 0
+        self.heatmap_filtered += self.beta*(heatmap_resized-self.heatmap_filtered)
+        heatmap_resized = self.heatmap_filtered.astype('uint8')
 
         heatmap_center = np.asarray([heatmap_resized.shape[0]/2, heatmap_resized.shape[1]/2])
         
@@ -332,7 +328,9 @@ class LandingModule(Node):
         desc_order = np.argsort(objective_values)[::-1]
         xy_idx = xy_idx[desc_order]
 
-        img_msg = self.cv_bridge.cv2_to_imgmsg((dist_thrs*255).astype('uint8'), encoding='mono8')
+        yc = int(-(xy_idx[0,0]*heatmap_resized.shape[0]-heatmap_center[0]))
+        xc = int(xy_idx[0,1]*heatmap_resized.shape[1]+heatmap_center[1])
+        img_msg = self.cv_bridge.cv2_to_imgmsg(cv2.circle(cv2.cvtColor((dist_thrs*255).astype('uint8'), cv2.COLOR_GRAY2BGR), (xc,yc), 3, (0,0,255), -1))
         img_msg.header.frame_id = heatmap_msg.header.frame_id
         self.heatmap_pub.publish(img_msg)
         return xy_idx
@@ -355,7 +353,7 @@ class LandingModule(Node):
         # and this is why such a simple control works.
         # Additionally, the assumption is that the maximum speed is very low
         # otherwise the moving average used in the semantic segmentation will break.
-        twist.linear.x = float(x * self.gain)
+        twist.linear.x = float(x * self.gain)  # the max bank angle is limited (tiltMax), therefore the gain is here to saturate
         twist.linear.y = float(-y * self.gain)
         twist.linear.z = float(z)
         
@@ -497,7 +495,7 @@ class LandingModule(Node):
         # TODO: isolate the sensing and state decision in two distinct methods...
         if landed_trigger:
             self.landing_status.state = LandingState.LANDED
-        elif ~np.isfinite(xs_err) or ~np.isfinite(ys_err) or ~np.isfinite(depth_std) or ~np.isfinite(depth_min) or self.cycles < self.mov_avg_size:
+        elif ~np.isfinite(xs_err) or ~np.isfinite(ys_err) or ~np.isfinite(depth_std) or ~np.isfinite(depth_min) or self.cycles < self.sensor_warm_up_cycles:
             self.landing_status.state = LandingState.SENSOR_ERROR
             self.giveup_landing_timer = 0
             self.cycles += 1
