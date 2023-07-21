@@ -28,7 +28,7 @@ class GenerateLandingHeatmap(Node):
         super().__init__('generate_landing_heatmap')
         self.declare_parameter('model_calib_cte', 2.0)
         self.declare_parameter('blur_kernel_size', 15)
-        self.declare_parameter('prompt_engineering', "{}")
+        self.declare_parameter('prompt_engineering', "a bird's eye view of a {}, ingame screen shot, bad graphics")
         self.add_on_set_parameters_callback(self.parameters_callback)
 
         self.model_calib_cte = self.get_parameter('model_calib_cte').value
@@ -40,7 +40,10 @@ class GenerateLandingHeatmap(Node):
         self.final_img_pub = self.create_publisher(ImageMsg, "/final_heatmap",1) ##DEBUG
 
         self.srv = self.create_service(GetLandingHeatmap, 'generate_landing_heatmap', self.get_landing_heatmap_callback)
-        if torch.cuda.is_available(): self.get_logger().warn('generate_landing_heatmap is using cuda!')
+        if torch.cuda.is_available(): 
+            self.get_logger().warn('generate_landing_heatmap is using CUDA GPU!')
+        else:
+            self.get_logger().error('generate_landing_heatmap is using CPU!')
         self.get_logger().info('generate_landing_heatmap is up and running!')
 
 
@@ -80,15 +83,10 @@ class GenerateLandingHeatmap(Node):
                 else:
                     inputs[k] = inputs[k]
             logits = model(**inputs).logits
-            logits = logits.detach().cpu().numpy()
-
-        # Filters prompts according to their max values
-        logits = logits.argmax(axis=0)
+            logits = logits.softmax(dim=0).detach().cpu().numpy()
 
         # Keep only the positive prompts
-        logits = np.logical_or.reduce([logits == n for n in np.arange(len(prompts))[-len(positive_prompts):]])
-
-        logits = logits.astype('uint8')*255
+        logits = logits[-len(positive_prompts):].sum(axis=0)
 
         # Blur to smooth the ViT patches
         logits = cv2.blur(logits,(self.blur_kernel_size,self.blur_kernel_size))
@@ -100,7 +98,7 @@ class GenerateLandingHeatmap(Node):
         response.success = True
         
         # returns heatmap as grayscale image
-        response.heatmap = self.cv_bridge.cv2_to_imgmsg(logits, encoding='mono8')
+        response.heatmap = self.cv_bridge.cv2_to_imgmsg(((logits>=request.safety_threshold)*255).astype('uint8'), encoding='mono8')
         response.heatmap.header.frame_id = input_image_msg.header.frame_id
 
         self.final_img_pub.publish(response.heatmap)##DEBUG

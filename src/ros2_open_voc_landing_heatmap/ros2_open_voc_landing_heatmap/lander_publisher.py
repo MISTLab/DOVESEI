@@ -42,8 +42,19 @@ from cv_bridge import CvBridge
 # semantic sementation because the second doesn't need a precise projection
 FOV = math.radians(73) #TODO: get this from the camera topic...
 
-NEGATIVE_PROMPTS = "building; house; roof; tree; road; water; fence; transmission lines; lamp post; vehicle; people"
-POSITIVE_PROMPTS = "grass"
+negative_prompts = ["building, house, apartment-building, warehouse, shed, garage", 
+                    "roof, rooftop, terrace, shelter, dome, canopy, ceiling", 
+                    "tree, bush, tall-plant", 
+                    "people, crowd", 
+                    "vehicle, car, train", 
+                    "lamp-post, transmission-line", 
+                    "fence, wall, hedge", 
+                    "road, street, avenue, highway, drive, lane"]
+positive_prompts = ["grass, backyard, frontyard, courtyard, lawn", 
+                    "sports-field, park, open-area, open-space"] 
+
+NEGATIVE_PROMPTS = ";".join(negative_prompts)
+POSITIVE_PROMPTS = ";".join(positive_prompts)
 
 
 class LandingState(Enum):
@@ -80,12 +91,12 @@ class LandingModule(Node):
         self.declare_parameter('twist_topic', '/quadctrl/flying_sensor/ctrl_twist_sp')
         self.declare_parameter('mov_avg_size', 20)
         self.declare_parameter('gain', 20)
-        self.declare_parameter('z_speed', 1.0)
-        self.declare_parameter('depth_new_size', 100)
-        self.declare_parameter('depth_smoothness', 0.2)
+        self.declare_parameter('z_speed', 3.0)
+        self.declare_parameter('depth_smoothness', 0.5) # CARLA's values oscillate on flat surfaces
         self.declare_parameter('altitude_landed', 1)
         self.declare_parameter('safe_altitude', 50)
         self.declare_parameter('safety_radius', 2.0)
+        self.declare_parameter('safety_threshold', 0.6)
         self.declare_parameter('giveup_after_sec', 5)
         self.declare_parameter('max_depth_sensing', 20)
         self.declare_parameter('use_random_search4new_place', False)
@@ -105,11 +116,11 @@ class LandingModule(Node):
         self.mov_avg_size = self.get_parameter('mov_avg_size').value
         self.gain = self.get_parameter('gain').value
         self.z_speed = self.get_parameter('z_speed').value
-        self.depth_new_size = self.get_parameter('depth_new_size').value
         self.depth_smoothness = self.get_parameter('depth_smoothness').value
         self.altitude_landed = self.get_parameter('altitude_landed').value
         self.safe_altitude = self.get_parameter('safe_altitude').value
         self.safety_radius = self.get_parameter('safety_radius').value
+        self.safety_threshold = self.get_parameter('safety_threshold').value
         self.giveup_after_sec = self.get_parameter('giveup_after_sec').value
         self.max_depth_sensing = self.get_parameter('max_depth_sensing').value
         self.use_random_search4new_place = self.get_parameter('use_random_search4new_place').value
@@ -228,9 +239,7 @@ class LandingModule(Node):
         max_dist = self.max_depth_sensing
 
         depth = self.cv_bridge.imgmsg_to_cv2(depthmsg, desired_encoding='passthrough')
-        depth = np.asarray(cv2.resize(depth, 
-                                      (int(self.depth_new_size*depth.shape[1]/depth.shape[0]),self.depth_new_size),
-                                      cv2.INTER_AREA))
+
         # In CARLA the depth goes up to 1000m, but we want 
         # any value bigger than max_dist to become max_dist
         depth[depth>max_dist] = np.nan
@@ -243,16 +252,18 @@ class LandingModule(Node):
         safety_radius_pixels = int(self.safety_radius/(proj/depth.shape[1]))
         mask = np.zeros_like(depth)
         mask = cv2.circle(mask, (depth_center[1],depth_center[0]), safety_radius_pixels, 255, -1)
-        depth[mask!=255] = 1000
+        depth[mask!=255] = max_dist
+        depth_std = depth[mask==255].std()
+        depth_min = depth[mask==255].min()
         
-        img_msg = self.cv_bridge.cv2_to_imgmsg(depth.astype('uint8'), encoding='mono8')
+        img_msg = self.cv_bridge.cv2_to_imgmsg((255*depth/max_dist).astype('uint8'), encoding='mono8')
         img_msg.header.frame_id = depthmsg.header.frame_id
         self.depth_proj_pub.publish(img_msg)
-        return depth[1000>depth].std(),depth[1000>depth].min()
+        return depth_std, depth_min
 
 
 
-    def get_xy_error_from_semantics(self, heatmap_msg):
+    def get_xy_error_from_semantics(self, heatmap_msg, beta = 0.1):
         """Normalized XY error according to the best place to land defined by the heatmap
         received from the generate_landing_heatmap service
         The heatmap received will be a mono8 image where the higher the value 
@@ -274,9 +285,6 @@ class LandingModule(Node):
             # like an RGB image so opencv can easily resize it...
             self.heatmap_mov_avg = np.ones((resize_h, resize_w, self.mov_avg_size), dtype=float)
         
-        # Array used for the moving average needs to be resized as well
-        self.heatmap_mov_avg = cv2.resize(self.heatmap_mov_avg,
-                                            (resize_w, resize_h),cv2.INTER_AREA)
         heatmap_resized = cv2.resize(heatmap,
                                      (self.heatmap_mov_avg.shape[1],self.heatmap_mov_avg.shape[0]),cv2.INTER_AREA)
 
@@ -300,20 +308,12 @@ class LandingModule(Node):
         _,tmp_thresh = cv2.threshold(heatmap_resized,0,255,cv2.THRESH_BINARY|cv2.THRESH_OTSU)
         heatmap_dist_function = cv2.distanceTransform(tmp_thresh, cv2.DIST_L2, 5)
         cv2.normalize(heatmap_dist_function, heatmap_dist_function, 0, 1.0, cv2.NORM_MINMAX)
-
-        # Just the heatmap_dist_function max value
-        # min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(heatmap_dist_function)
-        # xy_idx = np.asarray([[
-        #                      (heatmap_center[0] - max_loc[1])/heatmap_resized.shape[0],
-        #                      (heatmap_center[1] - max_loc[0])/heatmap_resized.shape[1]
-        #                      ],
-        #                      [1.0,0.0]])
-        
+       
         # Check area, perimeter, distance from center
         _, dist_thrs = cv2.threshold(heatmap_dist_function, 0.6, 1.0, cv2.THRESH_BINARY)
         contours,_ = cv2.findContours(dist_thrs.astype('uint8'), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        xy_idx = [[1.0,0],[1.0,0]] # if nothing is found below, move forward
-        objective_values = [0.0, 0.0]
+        xy_idx = [[1.0,0]] # if nothing is found below, move forward
+        objective_values = [0.0]
         for cnt in contours:
             area = cv2.contourArea(cnt)
             perimeter = cv2.arcLength(cnt, True)
@@ -447,7 +447,7 @@ class LandingModule(Node):
             # the service expects a string of prompts separated by ';'
             self.req.positive_prompts = positive_prompts
             self.req.negative_prompts = negative_prompts
-            self.req.erosion_size = int(self.heatmap_mask_erosion)
+            self.req.safety_threshold = self.safety_threshold
 
             def future_done_callback(future):
                 heatmap_msg = future.result().heatmap
@@ -469,8 +469,7 @@ class LandingModule(Node):
         altitude_landed_dynamic = self.altitude_landed if self.altitude_landed > estimated_travelled_distance else estimated_travelled_distance
         landed_trigger = self.landing_status.altitude <= altitude_landed_dynamic
         xy_err = self.get_xy_error_from_semantics(heatmap_msg)
-        xs_err = xy_err[0,0]
-        ys_err = xy_err[0,1]
+        xs_err, ys_err = xy_err[0]
         self.get_logger().info(f"Segmentation X,Y ERR: {xs_err:.2f},{ys_err:.2f}")
         # Very rudimentary filter
         xs_err_filtered = xs_err if abs(xs_err) > self.zero_error_eps else 0.0
@@ -521,7 +520,7 @@ class LandingModule(Node):
                             self.search4new_place_direction = np.random.rand(2)-1 # uniform random [-0.5,0.5] search direction
                         else:
                             # xy_err are already ordered according to the objective function 
-                            self.search4new_place_direction = xy_err[1] # get the next in line...
+                            self.search4new_place_direction = xy_err[1] if len(xy_err)>1 else xy_err[0] # get the next in line...
                         self.search4new_place_timer = curr_time_sec
                     search4new_place_time_passed = (curr_time_sec - self.search4new_place_timer)
                     if search4new_place_time_passed > self.search4new_place_max_time*self.landing_status.conservative_gain:
