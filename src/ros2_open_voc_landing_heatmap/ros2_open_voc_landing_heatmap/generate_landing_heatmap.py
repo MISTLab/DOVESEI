@@ -26,12 +26,10 @@ class GenerateLandingHeatmap(Node):
 
     def __init__(self):
         super().__init__('generate_landing_heatmap')
-        self.declare_parameter('model_calib_cte', 2.0)
         self.declare_parameter('blur_kernel_size', 15)
         self.declare_parameter('prompt_engineering', "a bird's eye view of a {}, ingame screen shot, bad graphics")
         self.add_on_set_parameters_callback(self.parameters_callback)
 
-        self.model_calib_cte = self.get_parameter('model_calib_cte').value
         self.blur_kernel_size = self.get_parameter('blur_kernel_size').value
         self.prompt_engineering = self.get_parameter('prompt_engineering').value
 
