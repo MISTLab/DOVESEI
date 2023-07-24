@@ -90,14 +90,15 @@ class LandingModule(Node):
         self.declare_parameter('heatmap_topic', '/heatmap')
         self.declare_parameter('depth_proj_topic', '/depth_proj')
         self.declare_parameter('twist_topic', '/quadctrl/flying_sensor/ctrl_twist_sp')
-        self.declare_parameter('beta', 1/20)
+        self.declare_parameter('beta', 1/50)
         self.declare_parameter('gain', 20)
         self.declare_parameter('z_speed', 3.0)
         self.declare_parameter('depth_smoothness', 0.5) # CARLA's values oscillate on flat surfaces
+        self.declare_parameter('depth_decimation_factor', 10)
         self.declare_parameter('altitude_landed', 1)
         self.declare_parameter('safe_altitude', 50)
         self.declare_parameter('safety_radius', 2.0)
-        self.declare_parameter('safety_threshold', 0.6)
+        self.declare_parameter('safety_threshold', 0.8)
         self.declare_parameter('giveup_after_sec', 5)
         self.declare_parameter('max_depth_sensing', 20)
         self.declare_parameter('use_random_search4new_place', False)
@@ -118,6 +119,7 @@ class LandingModule(Node):
         self.gain = self.get_parameter('gain').value
         self.z_speed = self.get_parameter('z_speed').value
         self.depth_smoothness = self.get_parameter('depth_smoothness').value
+        self.depth_decimation_factor = self.get_parameter('depth_decimation_factor').value
         self.altitude_landed = self.get_parameter('altitude_landed').value
         self.safe_altitude = self.get_parameter('safe_altitude').value
         self.safety_radius = self.get_parameter('safety_radius').value
@@ -244,8 +246,10 @@ class LandingModule(Node):
 
         # In CARLA the depth goes up to 1000m, but we want 
         # any value bigger than max_dist to become max_dist
-        depth[depth>max_dist] = np.nan
-        depth[np.isnan(depth)] = max_dist
+        depth[depth>max_dist] = max_dist
+        
+        # To make sure we won't ignore those points
+        depth[np.logical_not(np.isfinite(depth))] = 0.0
 
         depth_center = depth.shape[0]//2, depth.shape[1]//2
 
@@ -255,8 +259,18 @@ class LandingModule(Node):
         mask = np.zeros_like(depth)
         mask = cv2.circle(mask, (depth_center[1],depth_center[0]), safety_radius_pixels, 255, -1)
         depth[mask!=255] = max_dist
-        depth_std = depth[mask==255].std()
-        depth_min = depth[mask==255].min()
+
+        # The values depth_std and depth_min are used for flatness and collision detection,
+        # therefore they can't ignore the "holes" in the calculated disparity of real sensors.
+        # By resising with cv2.INTER_AREA if the areas with zeros are too many/big they will bring 
+        # the values down and the system will automatically react more conservativelly if uncertainty creeps in
+        # TODO: find a better way to take into account the holes...
+        mask_x_indices, mask_y_indices = np.where(mask==255)
+        depth_slice = depth[mask_x_indices.min():mask_x_indices.max()+1, mask_y_indices.min():mask_y_indices.max()+1] # bounding box...
+        depth_proj_resized = cv2.resize(depth_slice, (depth_slice.shape[1]//self.depth_decimation_factor,
+                                                      depth_slice.shape[0]//self.depth_decimation_factor), cv2.INTER_AREA)
+        depth_std = depth_proj_resized.std()
+        depth_min = depth_proj_resized.min()
         
         img_msg = self.cv_bridge.cv2_to_imgmsg((255*depth/max_dist).astype('uint8'), encoding='mono8')
         img_msg.header.frame_id = depthmsg.header.frame_id
@@ -471,9 +485,10 @@ class LandingModule(Node):
         landed_trigger = self.landing_status.altitude <= altitude_landed_dynamic
         xs_err, ys_err = xy_err[0] # normalised to the center of the image (-1 to 1)
         # Very rudimentary filter
-        self.landing_status.is_clear = math.sqrt(xs_err**2+ys_err**2)*self.proj < self.safety_radius
-        is_clear_dynamic_decision = math.sqrt(xs_err**2+ys_err**2)*self.proj < self.safety_radius*self.landing_status.conservative_gain
-        self.get_logger().info(f"Segmentation X,Y ERR, adjusted dist, dynamic threshold: {xs_err:.2f},{ys_err:.2f},{math.sqrt(xs_err**2+ys_err**2)*self.proj:.2f},{self.safety_radius*self.landing_status.conservative_gain:.2f}")
+        adjusted_err = math.sqrt(xs_err**2+ys_err**2)*self.proj
+        self.landing_status.is_clear = adjusted_err < self.safety_radius
+        is_clear_dynamic_decision = adjusted_err < self.safety_radius*self.landing_status.conservative_gain
+        self.get_logger().info(f"Segmentation X,Y ERR, adjusted dist, dynamic threshold: {xs_err:.2f},{ys_err:.2f},{adjusted_err:.2f},{self.safety_radius*self.landing_status.conservative_gain:.2f}")
         # TODO: improve the flat surface definition
         self.landing_status.is_flat = depth_std < self.depth_smoothness
         is_flat_dynamic_decision = depth_std < self.depth_smoothness/self.landing_status.conservative_gain
