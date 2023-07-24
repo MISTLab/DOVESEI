@@ -90,7 +90,7 @@ class LandingModule(Node):
         self.declare_parameter('heatmap_topic', '/heatmap')
         self.declare_parameter('depth_proj_topic', '/depth_proj')
         self.declare_parameter('twist_topic', '/quadctrl/flying_sensor/ctrl_twist_sp')
-        self.declare_parameter('beta', 1/50)
+        self.declare_parameter('beta', 1/100)
         self.declare_parameter('gain', 20)
         self.declare_parameter('z_speed', 3.0)
         self.declare_parameter('depth_smoothness', 0.5) # CARLA's values oscillate on flat surfaces
@@ -258,7 +258,6 @@ class LandingModule(Node):
         safety_radius_pixels = int(self.safety_radius/(self.proj/depth.shape[1]))
         mask = np.zeros_like(depth)
         mask = cv2.circle(mask, (depth_center[1],depth_center[0]), safety_radius_pixels, 255, -1)
-        depth[mask!=255] = max_dist
 
         # The values depth_std and depth_min are used for flatness and collision detection,
         # therefore they can't ignore the "holes" in the calculated disparity of real sensors.
@@ -486,9 +485,10 @@ class LandingModule(Node):
         xs_err, ys_err = xy_err[0] # normalised to the center of the image (-1 to 1)
         # Very rudimentary filter
         adjusted_err = math.sqrt(xs_err**2+ys_err**2)*self.proj
+        dynamic_threshold = self.safety_radius/self.landing_status.conservative_gain
         self.landing_status.is_clear = adjusted_err < self.safety_radius
-        is_clear_dynamic_decision = adjusted_err < self.safety_radius*self.landing_status.conservative_gain
-        self.get_logger().info(f"Segmentation X,Y ERR, adjusted dist, dynamic threshold: {xs_err:.2f},{ys_err:.2f},{adjusted_err:.2f},{self.safety_radius*self.landing_status.conservative_gain:.2f}")
+        is_clear_dynamic_decision = adjusted_err < dynamic_threshold
+        self.get_logger().info(f"Segmentation X,Y ERR, adjusted dist, dynamic threshold: {xs_err:.2f},{ys_err:.2f},{adjusted_err:.2f},{dynamic_threshold:.2f}")
         # TODO: improve the flat surface definition
         self.landing_status.is_flat = depth_std < self.depth_smoothness
         is_flat_dynamic_decision = depth_std < self.depth_smoothness/self.landing_status.conservative_gain
