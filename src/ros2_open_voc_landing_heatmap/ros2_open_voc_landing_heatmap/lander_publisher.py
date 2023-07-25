@@ -493,15 +493,9 @@ class LandingModule(Node):
         self.landing_status.is_flat = depth_std < self.depth_smoothness
         is_flat_dynamic_decision = depth_std < self.depth_smoothness/self.landing_status.conservative_gain
         # TODO: improve the is_collision_free definition
-        self.landing_status.is_collision_free = (depth_min >= self.max_depth_sensing) # sensor saturated
-        safety_distance = self.safety_radius if self.safety_radius > estimated_travelled_distance else estimated_travelled_distance
-        self.landing_status.is_collision_free |= depth_min >= safety_distance
-        self.landing_status.is_collision_free |= self.landing_status.altitude <= safety_distance # at this point the flatness is the only depth-based defense...
-        is_collision_free_dynamic_decision = (depth_min >= self.max_depth_sensing)
-        safety_radius_dynamic_decision = self.safety_radius*self.landing_status.conservative_gain
-        safety_radius_dynamic_decision = safety_radius_dynamic_decision if safety_radius_dynamic_decision >= estimated_travelled_distance else estimated_travelled_distance
-        is_collision_free_dynamic_decision |= depth_min >= safety_radius_dynamic_decision
-        is_collision_free_dynamic_decision |= self.landing_status.altitude <= safety_radius_dynamic_decision
+        self.landing_status.is_collision_free = depth_min >= self.max_depth_sensing # sensor saturated
+        is_collision_free_dynamic_decision = self.landing_status.is_collision_free or abs(self.landing_status.altitude - depth_min) < self.depth_smoothness/self.landing_status.conservative_gain
+        self.landing_status.is_collision_free |= abs(self.landing_status.altitude - depth_min) < self.depth_smoothness
 
         # Trying to isolate all the sensing above 
         # and the state switching decisions below.
