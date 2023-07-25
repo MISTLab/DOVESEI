@@ -17,6 +17,7 @@ from ros2_open_voc_landing_heatmap_srv.srv import GetLandingHeatmap
 import rclpy
 from rclpy.node import Node
 from rcl_interfaces.msg import SetParametersResult
+from sensor_msgs.msg import Imu
 from cv_bridge import CvBridge
 
 
@@ -34,6 +35,18 @@ class GenerateLandingHeatmap(Node):
         self.prompt_engineering = self.get_parameter('prompt_engineering').value
 
         self.cv_bridge = CvBridge()
+
+        self.get_logger().warn('Waiting for the simulator...')
+        self.check_flying_sensor_alive = self.create_subscription(
+            Imu,
+            '/carla/flying_sensor',
+            self.start_node,
+            1)
+
+
+    def start_node(self, msg):
+        self.get_logger().warn('Simulator is online!')
+        self.destroy_subscription(self.check_flying_sensor_alive) # we don't need this subscriber anymore...
 
         self.final_img_pub = self.create_publisher(ImageMsg, "/final_heatmap",1) ##DEBUG
 
