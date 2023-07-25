@@ -9,6 +9,7 @@ import sys
 import math
 from enum import Enum
 from dataclasses import dataclass
+import json
 
 import numpy as np
 import cv2
@@ -83,7 +84,7 @@ class LandingStatus:
 
 class LandingModule(Node):
 
-    def __init__(self, debug=False):
+    def __init__(self, debug=False, savefile=None):
         super().__init__('landing_module')
         self.declare_parameter('img_topic', '/carla/flying_sensor/rgb_down/image')
         self.declare_parameter('depth_topic', '/carla/flying_sensor/depth_down/image')
@@ -140,6 +141,8 @@ class LandingModule(Node):
         assert self.min_conservative_gain > 0, "Min conservative time must be bigger than zero!"
 
         self.debug = debug
+        self.savefile = savefile
+        self.savedict = {}
 
         self.cycles = 0
         
@@ -356,8 +359,8 @@ class LandingModule(Node):
         res = self.get_tf()
         if res is None:
             return None
-        t, init_pos, init_quat = res
-        return init_pos[2]
+        curr_t, self.curr_pos, curr_quat = res
+        return self.curr_pos[2]
     
 
     def publish_twist(self, x, y, z):
@@ -416,6 +419,19 @@ class LandingModule(Node):
         self.get_logger().info(f"Elapsed Time: {self.landing_status.elapsed_time_sec:0.3f} s")
         state_msg.data = msg_str
         self.state_pub.publish(state_msg)
+
+        if self.savefile:
+            tmp_dict = {
+                'state': str(self.landing_status.state).split('.')[1],
+                'is_safe': str(self.landing_status.is_safe),
+                'is_clear': str(self.landing_status.is_clear),
+                'is_collision_free': str(self.landing_status.is_collision_free),
+                'is_flat': str(self.landing_status.is_flat),
+                'position': self.curr_pos,
+                'conservative_gain': self.landing_status.conservative_gain,
+                'loop_freq': 1/self.landing_status.delta_time_sec
+            }
+            self.savedict[int(self.landing_status.elapsed_time_sec*1000)] = tmp_dict
 
 
     def sense_and_act(self, rgbmsg, depthmsg):
@@ -570,16 +586,24 @@ class LandingModule(Node):
 
 def main():
     debug = False
+    savefile = None
     if len(sys.argv)>1:
-        if "debug" in sys.argv[1]:
+        if "debug" in sys.argv[1:]:
             debug = True
+        for arg in sys.argv[1:]:
+            if "savefile" in arg:
+                savefile = arg.split("=")[-1]
+                print(savefile)
     rclpy.init()
-    landing_module = LandingModule(debug)
+    landing_module = LandingModule(debug, savefile)
     try:
         rclpy.spin(landing_module)
     except KeyboardInterrupt:
         pass
     finally:
+        if savefile:
+            with open(savefile+".json", "w") as file:
+                json.dump(landing_module.savedict, file)
         landing_module.on_shutdown_cb()
         rclpy.shutdown()
 
