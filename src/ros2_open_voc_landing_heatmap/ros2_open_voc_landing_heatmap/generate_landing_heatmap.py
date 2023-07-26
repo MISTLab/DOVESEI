@@ -27,13 +27,6 @@ class GenerateLandingHeatmap(Node):
 
     def __init__(self):
         super().__init__('generate_landing_heatmap')
-        self.declare_parameter('blur_kernel_size', 15)
-        self.declare_parameter('prompt_engineering', "a bird's eye view of a {}, ingame screen shot, bad graphics")
-        self.add_on_set_parameters_callback(self.parameters_callback)
-
-        self.blur_kernel_size = self.get_parameter('blur_kernel_size').value
-        self.prompt_engineering = self.get_parameter('prompt_engineering').value
-
         self.cv_bridge = CvBridge()
 
         self.get_logger().warn('Waiting for the simulator...')
@@ -56,22 +49,12 @@ class GenerateLandingHeatmap(Node):
         else:
             self.get_logger().error('generate_landing_heatmap is using CPU!')
         self.get_logger().info('generate_landing_heatmap is up and running!')
-
-
-    def parameters_callback(self, params):
-        for param in params:
-            try:
-                var_type = type(getattr(self, param.name))
-                setattr(self, param.name, var_type(param.value))
-                self.get_logger().info(f'Parameter updated: {param.name} = {param.value}')
-            except AttributeError:
-                return SetParametersResult(successful=False)
-        return SetParametersResult(successful=True)
         
     
 
     def get_landing_heatmap_callback(self, request, response):
-        # Inputs: request.image, request.prompts, request.erosion_size
+        # Inputs: request.image, request.negative_prompts, request.positive_prompts, request.prompt_engineering
+        #         request.safety_threshold, request.blur_kernel_size
         # Outputs: response.heatmap, response.success
 
         self.get_logger().debug('New heatmap request received!')
@@ -80,10 +63,14 @@ class GenerateLandingHeatmap(Node):
         input_image = self.cv_bridge.imgmsg_to_cv2(input_image_msg, desired_encoding='rgb8')
         negative_prompts = [w for w in request.negative_prompts.split(';') if len(w)]
         positive_prompts = [w for w in request.positive_prompts.split(';') if len(w)]
+        prompt_engineering = request.prompt_engineering
+        safety_threshold = request.safety_threshold
+        blur_kernel_size = request.blur_kernel_size
+        
         assert len(negative_prompts)>0, "You must supply at least one negative prompt!"
         assert len(positive_prompts)>0, "You must supply at least one positive prompt!"
         prompts = negative_prompts + positive_prompts
-        prompts = [self.prompt_engineering.format(p) for p in prompts]
+        prompts = [prompt_engineering.format(p) for p in prompts]
 
         with torch.inference_mode():
             # TODO: recycle old prompts to avoid encoding the same prompts multiple times...
@@ -100,7 +87,7 @@ class GenerateLandingHeatmap(Node):
         logits = logits[-len(positive_prompts):].sum(axis=0)
 
         # Blur to smooth the ViT patches
-        logits = cv2.blur(logits,(self.blur_kernel_size,self.blur_kernel_size))
+        logits = cv2.blur(logits,(blur_kernel_size, blur_kernel_size))
  
         # Finally, resize to match input image (CLIPSeg resizes without keeping the proportions)
         logits = cv2.resize(logits, (input_image.shape[1],input_image.shape[0]), cv2.INTER_AREA)
@@ -109,7 +96,7 @@ class GenerateLandingHeatmap(Node):
         response.success = True
         
         # returns heatmap as grayscale image
-        response.heatmap = self.cv_bridge.cv2_to_imgmsg(((logits>=request.safety_threshold)*255).astype('uint8'), encoding='mono8')
+        response.heatmap = self.cv_bridge.cv2_to_imgmsg(((logits>=safety_threshold)*255).astype('uint8'), encoding='mono8')
         response.heatmap.header.frame_id = input_image_msg.header.frame_id
 
         self.final_img_pub.publish(response.heatmap)##DEBUG

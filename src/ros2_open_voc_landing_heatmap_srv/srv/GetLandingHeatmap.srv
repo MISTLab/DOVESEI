@@ -1,8 +1,9 @@
 sensor_msgs/Image image
 string negative_prompts
 string positive_prompts
-int8 erosion_size
+string prompt_engineering
 float32 safety_threshold
+int8 blur_kernel_size
 ---
 sensor_msgs/Image heatmap
 bool success
