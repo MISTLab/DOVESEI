@@ -105,7 +105,7 @@ class LandingModule(Node):
         self.declare_parameter('giveup_after_sec', 5)
         self.declare_parameter('max_depth_sensing', 20)
         self.declare_parameter('use_random_search4new_place', False)
-        self.declare_parameter('search4new_place_max_time', 20)
+        self.declare_parameter('search4new_place_max_time', 60)
         self.declare_parameter('max_seg_height', 17)
         self.declare_parameter('max_landing_time_sec', 5*60)
         self.declare_parameter('min_conservative_gain', 0.5)
@@ -585,7 +585,9 @@ class LandingModule(Node):
                             self.search4new_place_direction = xy_err[1] if len(xy_err)>1 else xy_err[0] # get the next in line...
                         self.search4new_place_timer = curr_time_sec
                     search4new_place_time_passed = (curr_time_sec - self.search4new_place_timer)
-                    if search4new_place_time_passed > self.search4new_place_max_time*self.landing_status.conservative_gain:
+                    if search4new_place_time_passed > self.search4new_place_max_time:
+                        # since the system is biased towards places that are close to the UAV, the best way
+                        # to avoid a place where landing doesn't work is to move away from it and towards the next candidate
                         self.giveup_landing_timer = 0 # safe place, reset giveup_landing_timer
                         self.search4new_place_timer = 0
                         self.landing_status.state = LandingState.SEARCHING
