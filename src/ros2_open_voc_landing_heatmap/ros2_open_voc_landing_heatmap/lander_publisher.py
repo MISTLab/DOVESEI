@@ -91,26 +91,31 @@ class LandingModule(Node):
         self.declare_parameter('heatmap_topic', '/heatmap')
         self.declare_parameter('depth_proj_topic', '/depth_proj')
         self.declare_parameter('twist_topic', '/quadctrl/flying_sensor/ctrl_twist_sp')
-        self.declare_parameter('beta', 1/100)
+        self.declare_parameter('beta', 1/20)
         self.declare_parameter('gain', 20)
-        self.declare_parameter('z_speed', 3.0)
+        self.declare_parameter('z_speed_landing', 3.0)
+        self.declare_parameter('z_speed_climbing', 6.0)
         self.declare_parameter('depth_smoothness', 0.5) # CARLA's values oscillate on flat surfaces
         self.declare_parameter('depth_decimation_factor', 10)
         self.declare_parameter('altitude_landed', 1)
         self.declare_parameter('safe_altitude', 50)
         self.declare_parameter('safety_radius', 2.0)
         self.declare_parameter('safety_threshold', 0.8)
+        self.declare_parameter('dist_func_threshold', 0.8)
         self.declare_parameter('giveup_after_sec', 5)
         self.declare_parameter('max_depth_sensing', 20)
         self.declare_parameter('use_random_search4new_place', False)
-        self.declare_parameter('heatmap_mask_erosion', 2)
         self.declare_parameter('search4new_place_max_time', 20)
         self.declare_parameter('max_seg_height', 17)
         self.declare_parameter('max_landing_time_sec', 5*60)
-        self.declare_parameter('min_conservative_gain', 0.1)
+        self.declare_parameter('min_conservative_gain', 0.5)
         self.declare_parameter('sensor_warm_up_cycles', 10)
         self.declare_parameter('negative_prompts', NEGATIVE_PROMPTS)
         self.declare_parameter('positive_prompts', POSITIVE_PROMPTS)
+        self.declare_parameter('blur_kernel_size', 15)
+        self.declare_parameter('use_dynamic_threshold',0.01)
+        self.declare_parameter('prompt_engineering', "a bird's eye view of a {}, ingame screen shot, bad graphics")
+
         img_topic = self.get_parameter('img_topic').value
         depth_topic = self.get_parameter('depth_topic').value
         heatmap_topic = self.get_parameter('heatmap_topic').value
@@ -118,17 +123,18 @@ class LandingModule(Node):
         twist_topic = self.get_parameter('twist_topic').value
         self.beta = self.get_parameter('beta').value
         self.gain = self.get_parameter('gain').value
-        self.z_speed = self.get_parameter('z_speed').value
+        self.z_speed_landing = self.get_parameter('z_speed_landing').value
+        self.z_speed_climbing = self.get_parameter('z_speed_climbing').value
         self.depth_smoothness = self.get_parameter('depth_smoothness').value
         self.depth_decimation_factor = self.get_parameter('depth_decimation_factor').value
         self.altitude_landed = self.get_parameter('altitude_landed').value
         self.safe_altitude = self.get_parameter('safe_altitude').value
         self.safety_radius = self.get_parameter('safety_radius').value
         self.safety_threshold = self.get_parameter('safety_threshold').value
+        self.dist_func_threshold = self.get_parameter('dist_func_threshold').value
         self.giveup_after_sec = self.get_parameter('giveup_after_sec').value
         self.max_depth_sensing = self.get_parameter('max_depth_sensing').value
         self.use_random_search4new_place = self.get_parameter('use_random_search4new_place').value
-        self.heatmap_mask_erosion = self.get_parameter('heatmap_mask_erosion').value
         self.search4new_place_max_time = self.get_parameter('search4new_place_max_time').value
         self.max_seg_height = self.get_parameter('max_seg_height').value
         self.max_landing_time_sec = self.get_parameter('max_landing_time_sec').value
@@ -136,13 +142,41 @@ class LandingModule(Node):
         self.sensor_warm_up_cycles = self.get_parameter('sensor_warm_up_cycles').value
         self.negative_prompts = self.get_parameter('negative_prompts').value
         self.positive_prompts = self.get_parameter('positive_prompts').value
+        self.blur_kernel_size = self.get_parameter('blur_kernel_size').value
+        self.prompt_engineering = self.get_parameter('prompt_engineering').value
+        self.use_dynamic_threshold = self.get_parameter('use_dynamic_threshold').value
         self.add_on_set_parameters_callback(self.parameters_callback)
 
         assert self.min_conservative_gain > 0, "Min conservative time must be bigger than zero!"
 
         self.debug = debug
         self.savefile = savefile
-        self.savedict = {}
+        self.savedict = { }
+        self.curr_params = {
+                        "beta": self.beta,
+                        "gain": self.gain,
+                        "z_speed_landing": self.z_speed_landing,
+                        "z_speed_climbing": self.z_speed_climbing,
+                        "depth_smoothnes": self.depth_smoothness,
+                        "depth_decimation_factor": self.depth_decimation_factor,
+                        "altitude_landed": self.altitude_landed,
+                        "safe_altitude": self.safe_altitude,
+                        "safety_radius": self.safety_radius,
+                        "safety_threshold": self.safety_threshold,
+                        "dist_func_threshold": self.dist_func_threshold,
+                        "giveup_after_sec": self.giveup_after_sec,
+                        "max_depth_sensing": self.max_depth_sensing,
+                        "use_random_search4new_place": self.use_random_search4new_place,
+                        "search4new_place_max_time": self.search4new_place_max_time,
+                        "max_seg_height": self.max_seg_height,
+                        "max_landing_time_sec": self.max_landing_time_sec,
+                        "min_conservative_gain": self.min_conservative_gain,
+                        "sensor_warm_up_cycles": self.sensor_warm_up_cycles,
+                        "negative_prompts": self.negative_prompts,
+                        "positive_prompts": self.positive_prompts,
+                        "blur_kernel_size": self.blur_kernel_size,
+                        "prompt_engineering": self.prompt_engineering
+                        }
 
         self.cycles = 0
         
@@ -204,6 +238,7 @@ class LandingModule(Node):
             try:
                 var_type = type(getattr(self, param.name))
                 setattr(self, param.name, var_type(param.value))
+                self.curr_params[param.name] = param.value
                 self.get_logger().warn(f'Parameter updated: {param.name} = {param.value}')
             except AttributeError:
                 return SetParametersResult(successful=False)
@@ -322,7 +357,7 @@ class LandingModule(Node):
         cv2.normalize(heatmap_dist_function, heatmap_dist_function, 0, 1.0, cv2.NORM_MINMAX)
        
         # Check area, perimeter, distance from center
-        _, dist_thrs = cv2.threshold(heatmap_dist_function, 0.6, 1.0, cv2.THRESH_BINARY)
+        _, dist_thrs = cv2.threshold(heatmap_dist_function, self.dist_func_threshold, 1.0, cv2.THRESH_BINARY)
         contours,_ = cv2.findContours(dist_thrs.astype('uint8'), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         xy_idx = [[1.0,0]] # if nothing is found below, move forward
         objective_values = [0.0]
@@ -429,7 +464,8 @@ class LandingModule(Node):
                 'is_flat': str(self.landing_status.is_flat),
                 'position': self.curr_pos,
                 'conservative_gain': self.landing_status.conservative_gain,
-                'loop_freq': 1/self.landing_status.delta_time_sec
+                'loop_freq': 1/self.landing_status.delta_time_sec,
+                'params': self.curr_params
             }
             self.savedict[int(self.landing_status.elapsed_time_sec*1000)] = tmp_dict
 
@@ -477,6 +513,9 @@ class LandingModule(Node):
             self.req.positive_prompts = positive_prompts
             self.req.negative_prompts = negative_prompts
             self.req.safety_threshold = self.safety_threshold
+            self.req.prompt_engineering = self.prompt_engineering
+            self.req.blur_kernel_size = self.blur_kernel_size
+            self.req.use_dynamic_threshold = self.use_dynamic_threshold
 
             def future_done_callback(future):
                 heatmap_msg = future.result().heatmap
@@ -495,7 +534,7 @@ class LandingModule(Node):
 
 
     def state_update(self, curr_time_sec, xy_err, depth_std, depth_min):
-        estimated_travelled_distance = self.z_speed*self.landing_status.delta_time_sec # TODO:improve this estimation or add some extra margin
+        estimated_travelled_distance = self.z_speed_landing*self.landing_status.delta_time_sec # TODO:improve this estimation or add some extra margin
         altitude_landed_dynamic = self.altitude_landed if self.altitude_landed > estimated_travelled_distance else estimated_travelled_distance
         landed_trigger = self.landing_status.altitude <= altitude_landed_dynamic
         xs_err, ys_err = xy_err[0] # normalised to the center of the image (-1 to 1)
@@ -564,10 +603,10 @@ class LandingModule(Node):
             z = 0.0
         elif self.landing_status.state == LandingState.LANDING:
             x = y = 0.0
-            z = -self.z_speed
+            z = -self.z_speed_landing
         elif self.landing_status.state == LandingState.CLIMBING:
             x = y = 0.0
-            z = self.z_speed
+            z = self.z_speed_climbing
         elif self.landing_status.state == LandingState.WAITING:
             x = y = z = 0.0
         elif self.landing_status.state == LandingState.RESTARTING:
@@ -593,7 +632,6 @@ def main():
         for arg in sys.argv[1:]:
             if "savefile" in arg:
                 savefile = arg.split("=")[-1]
-                print(savefile)
     rclpy.init()
     landing_module = LandingModule(debug, savefile)
     try:
