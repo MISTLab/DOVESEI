@@ -101,7 +101,7 @@ class LandingModule(Node):
         self.declare_parameter('safe_altitude', 50)
         self.declare_parameter('safety_radius', 2.0)
         self.declare_parameter('safety_threshold', 0.8)
-        self.declare_parameter('dist_func_threshold', 0.8)
+        self.declare_parameter('dist_func_threshold', 0.6)
         self.declare_parameter('giveup_after_sec', 5)
         self.declare_parameter('max_depth_sensing', 20)
         self.declare_parameter('use_random_search4new_place', False)
@@ -366,9 +366,11 @@ class LandingModule(Node):
             perimeter = cv2.arcLength(cnt, True)
             if (area == 0) or (perimeter == 0):
                 continue
-            M = cv2.moments(cnt)
-            cy = int(M['m10']/M['m00'])
-            cx = int(M['m01']/M['m00'])
+            mask = np.zeros_like(heatmap_dist_function)
+            cv2.drawContours(mask, [cnt], contourIdx=-1, color=(255), thickness=cv2.FILLED)
+            dist_cnt = heatmap_dist_function.copy()
+            dist_cnt[mask!=255] = 0.0
+            cx, cy = np.unravel_index(dist_cnt.argmax(), dist_cnt.shape)
             d_center = np.sqrt(((heatmap_center-[cx,cy])**2).sum())
             objective = (1/perimeter)*area/(d_center+1) # complex shapes will have longer perimeter
             objective_values.append(objective)
