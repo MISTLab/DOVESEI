@@ -91,7 +91,7 @@ class LandingModule(Node):
         self.declare_parameter('heatmap_topic', '/heatmap')
         self.declare_parameter('depth_proj_topic', '/depth_proj')
         self.declare_parameter('twist_topic', '/quadctrl/flying_sensor/ctrl_twist_sp')
-        self.declare_parameter('beta', 1/20)
+        self.declare_parameter('beta', 1/10)
         self.declare_parameter('gain', 20)
         self.declare_parameter('z_speed_landing', 3.0)
         self.declare_parameter('z_speed_climbing', 6.0)
@@ -340,7 +340,7 @@ class LandingModule(Node):
         heatmap_resized = cv2.resize(heatmap,
                                      (self.heatmap_filtered.shape[1],self.heatmap_filtered.shape[0]),cv2.INTER_AREA)
 
-        # Add the received heatmap to the moving average array
+        # Add the received heatmap to the buffer
         self.heatmap_filtered += self.beta*(heatmap_resized-self.heatmap_filtered)
         heatmap_resized = self.heatmap_filtered.astype('uint8')
 
@@ -352,7 +352,7 @@ class LandingModule(Node):
         heatmap_resized[0,:] = 0
         heatmap_resized[-1,:] = 0
         
-        _,tmp_thresh = cv2.threshold(heatmap_resized,0,255,cv2.THRESH_BINARY|cv2.THRESH_OTSU)
+        _,tmp_thresh = cv2.threshold(heatmap_resized,127,255,cv2.THRESH_BINARY)
         heatmap_dist_function = cv2.distanceTransform(tmp_thresh, cv2.DIST_L2, 5)
         cv2.normalize(heatmap_dist_function, heatmap_dist_function, 0, 1.0, cv2.NORM_MINMAX)
        
