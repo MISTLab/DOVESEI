@@ -95,8 +95,18 @@ class GenerateLandingHeatmap(Node):
         # TODO: implement some logic to decide this...
         response.success = True
         
+        logits_threshold = logits>=safety_threshold
+        if request.use_dynamic_threshold > 0.0:
+            threshold_mult = request.use_dynamic_threshold
+            for ti in range(100):
+                if np.all(logits_threshold==False):
+                    logits_threshold = logits>=(safety_threshold-threshold_mult)
+                    threshold_mult += threshold_mult
+                else:
+                    break
+        
         # returns heatmap as grayscale image
-        response.heatmap = self.cv_bridge.cv2_to_imgmsg(((logits>=safety_threshold)*255).astype('uint8'), encoding='mono8')
+        response.heatmap = self.cv_bridge.cv2_to_imgmsg((logits_threshold*255).astype('uint8'), encoding='mono8')
         response.heatmap.header.frame_id = input_image_msg.header.frame_id
 
         self.final_img_pub.publish(response.heatmap)##DEBUG
