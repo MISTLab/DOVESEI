@@ -99,7 +99,7 @@ class GenerateLandingHeatmap(Node):
         if request.dynamic_threshold > 0.0:
             total_pixels = np.prod(logits.shape)
             threshold_step = safety_threshold/DYNAMIC_THRESHOLD_MAXSTEPS
-            for ti in range(1,DYNAMIC_THRESHOLD_MAXSTEPS+1):
+            for ti in range(0,DYNAMIC_THRESHOLD_MAXSTEPS+1):
                 if (logits_threshold==True).sum()/total_pixels < request.dynamic_threshold:
                     logits_threshold = logits > (safety_threshold-threshold_step*ti)
                 else:
