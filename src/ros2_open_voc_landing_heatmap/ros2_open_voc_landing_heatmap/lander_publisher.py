@@ -113,7 +113,7 @@ class LandingModule(Node):
         self.declare_parameter('negative_prompts', NEGATIVE_PROMPTS)
         self.declare_parameter('positive_prompts', POSITIVE_PROMPTS)
         self.declare_parameter('blur_kernel_size', 15)
-        self.declare_parameter('use_dynamic_threshold',0.01)
+        self.declare_parameter('seg_dynamic_threshold',0.10)
         self.declare_parameter('prompt_engineering', "a bird's eye view of a {}, ingame screen shot, bad graphics")
 
         img_topic = self.get_parameter('img_topic').value
@@ -144,7 +144,7 @@ class LandingModule(Node):
         self.positive_prompts = self.get_parameter('positive_prompts').value
         self.blur_kernel_size = self.get_parameter('blur_kernel_size').value
         self.prompt_engineering = self.get_parameter('prompt_engineering').value
-        self.use_dynamic_threshold = self.get_parameter('use_dynamic_threshold').value
+        self.seg_dynamic_threshold = self.get_parameter('seg_dynamic_threshold').value
         self.add_on_set_parameters_callback(self.parameters_callback)
 
         assert self.min_conservative_gain > 0, "Min conservative time must be bigger than zero!"
@@ -517,7 +517,7 @@ class LandingModule(Node):
             self.req.safety_threshold = self.safety_threshold
             self.req.prompt_engineering = self.prompt_engineering
             self.req.blur_kernel_size = self.blur_kernel_size
-            self.req.use_dynamic_threshold = self.use_dynamic_threshold
+            self.req.dynamic_threshold = self.seg_dynamic_threshold
 
             def future_done_callback(future):
                 heatmap_msg = future.result().heatmap

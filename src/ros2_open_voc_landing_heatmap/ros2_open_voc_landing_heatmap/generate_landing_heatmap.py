@@ -22,7 +22,7 @@ from cv_bridge import CvBridge
 
 
 CLIPSEG_OUTPUT_SIZE = 352
-
+DYNAMIC_THRESHOLD_MAXSTEPS = 100
 class GenerateLandingHeatmap(Node):
 
     def __init__(self):
@@ -95,15 +95,16 @@ class GenerateLandingHeatmap(Node):
         # TODO: implement some logic to decide this...
         response.success = True
         
-        logits_threshold = logits>=safety_threshold
-        if request.use_dynamic_threshold > 0.0:
-            threshold_mult = request.use_dynamic_threshold
-            for ti in range(100):
-                if np.all(logits_threshold==False):
-                    logits_threshold = logits>=(safety_threshold-threshold_mult)
-                    threshold_mult += threshold_mult
+        logits_threshold = logits > safety_threshold
+        if request.dynamic_threshold > 0.0:
+            total_pixels = np.prod(logits.shape)
+            threshold_step = safety_threshold/DYNAMIC_THRESHOLD_MAXSTEPS
+            for ti in range(1,DYNAMIC_THRESHOLD_MAXSTEPS+1):
+                if (logits_threshold==True).sum()/total_pixels < request.dynamic_threshold:
+                    logits_threshold = logits > (safety_threshold-threshold_step*ti)
                 else:
                     break
+            self.get_logger().warn(f'Dynamic threshold: {(safety_threshold-threshold_step*ti):.3f}')
         
         # returns heatmap as grayscale image
         response.heatmap = self.cv_bridge.cv2_to_imgmsg((logits_threshold*255).astype('uint8'), encoding='mono8')

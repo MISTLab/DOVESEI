@@ -4,7 +4,7 @@ string positive_prompts
 string prompt_engineering
 float32 safety_threshold
 int8 blur_kernel_size
-float32 use_dynamic_threshold
+float32 dynamic_threshold
 ---
 sensor_msgs/Image heatmap
 bool success
