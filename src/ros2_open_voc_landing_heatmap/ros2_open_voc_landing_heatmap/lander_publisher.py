@@ -291,27 +291,24 @@ class LandingModule(Node):
         # To make sure we won't ignore those points
         depth[np.logical_not(np.isfinite(depth))] = 0.0
 
-        depth_center = depth.shape[0]//2, depth.shape[1]//2
-
-        # self.safety_radius and self.proj are in metres
-        # depth.shape[1] is in px
-        safety_radius_pixels = int(self.safety_radius/(self.proj/depth.shape[1]))
-        mask = np.zeros_like(depth)
-        mask = cv2.circle(mask, (depth_center[1],depth_center[0]), safety_radius_pixels, 255, -1)
-
         # The values depth_std and depth_min are used for flatness and collision detection,
         # therefore they can't ignore the "holes" in the calculated disparity of real sensors.
         # By resising with cv2.INTER_AREA if the areas with zeros are too many/big they will bring 
         # the values down and the system will automatically react more conservativelly if uncertainty creeps in
         # TODO: find a better way to take into account the holes...
-        mask_x_indices, mask_y_indices = np.where(mask==255)
-        depth_slice = depth[mask_x_indices.min():mask_x_indices.max()+1, mask_y_indices.min():mask_y_indices.max()+1] # bounding box...
-        depth_proj_resized = cv2.resize(depth_slice, (depth_slice.shape[1]//self.depth_decimation_factor,
-                                                      depth_slice.shape[0]//self.depth_decimation_factor), cv2.INTER_AREA)
-        depth_std = depth_proj_resized.std()
-        depth_min = depth_proj_resized.min()
+        depth_proj_resized = cv2.resize(depth, (depth.shape[1]//self.depth_decimation_factor,
+                                                depth.shape[0]//self.depth_decimation_factor), cv2.INTER_AREA)
+
+        # self.safety_radius and self.proj are in metres
+        safety_radius_pixels = int(2*self.safety_radius/(self.proj/depth_proj_resized.shape[1]))
+        mask = np.zeros_like(depth_proj_resized)
+        mask = cv2.circle(mask, (depth_proj_resized.shape[1]//2,depth_proj_resized.shape[0]//2), safety_radius_pixels, 255, -1)
+
+        depth_proj_resized[mask!=255] = depth_proj_resized.max()
+        depth_std = depth_proj_resized[mask==255].std()
+        depth_min = depth_proj_resized[mask==255].min()
         
-        img_msg = self.cv_bridge.cv2_to_imgmsg((255*depth/max_dist).astype('uint8'), encoding='mono8')
+        img_msg = self.cv_bridge.cv2_to_imgmsg((255*depth_proj_resized/max_dist).astype('uint8'), encoding='mono8')
         img_msg.header.frame_id = depthmsg.header.frame_id
         self.depth_proj_pub.publish(img_msg)
         return depth_std, depth_min
@@ -363,7 +360,7 @@ class LandingModule(Node):
 
         heatmap_dist_function_filtered = self.heatmap_dist_function_filtered.copy()
         radius_mult = 2 if self.landing_status.state == LandingState.AIMING else 1
-        if self.landing_status.state == LandingState.AIMING or self.landing_status.state == LandingState.LANDING:
+        if self.landing_status.state == LandingState.AIMING or self.landing_status.state == LandingState.LANDING or self.landing_status.state == LandingState.WAITING:
             safety_radius_pixels = radius_mult * int(self.safety_radius/(self.proj/heatmap_dist_function_filtered.shape[1]))
             mask = np.zeros_like(heatmap_dist_function_filtered)
             mask = cv2.circle(mask, (int(heatmap_center[1]),int(heatmap_center[0])), safety_radius_pixels, 255, -1)
@@ -565,16 +562,15 @@ class LandingModule(Node):
         adjusted_err = math.sqrt(xs_err**2+ys_err**2)
         dynamic_threshold = 2*self.safety_radius/self.landing_status.conservative_gain # the segmentation is always noisy, thus the 2x
         self.landing_status.is_clear = adjusted_err < self.safety_radius
-        is_landing = adjusted_err < self.safety_radius / 2
         is_clear_dynamic_decision = adjusted_err < dynamic_threshold
         self.get_logger().info(f"Segmentation X,Y ERR, adjusted dist, dynamic threshold: {xs_err:.2f},{ys_err:.2f},{adjusted_err:.2f},{dynamic_threshold:.2f}")
         # TODO: improve the flat surface definition
         self.landing_status.is_flat = depth_std < self.depth_smoothness
         is_flat_dynamic_decision = depth_std < self.depth_smoothness/self.landing_status.conservative_gain
         # TODO: improve the is_collision_free definition
-        self.landing_status.is_collision_free = depth_min >= self.max_depth_sensing # sensor saturated
-        is_collision_free_dynamic_decision = self.landing_status.is_collision_free or abs(self.landing_status.altitude - depth_min) < self.depth_smoothness/self.landing_status.conservative_gain
-        self.landing_status.is_collision_free |= abs(self.landing_status.altitude - depth_min) < self.depth_smoothness
+        self.landing_status.is_collision_free = (depth_min-estimated_travelled_distance) > self.safety_radius or landed_trigger
+        is_collision_free_dynamic_decision = self.landing_status.is_collision_free
+        is_landing = adjusted_err < self.safety_radius / 2 and is_collision_free_dynamic_decision and is_flat_dynamic_decision
 
         # Trying to isolate all the sensing above 
         # and the state switching decisions below.
