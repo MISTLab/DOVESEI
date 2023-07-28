@@ -61,13 +61,14 @@ POSITIVE_PROMPTS = ";".join(positive_prompts)
 
 class LandingState(Enum):
     SEARCHING = 0 
-    LANDING = 1
-    WAITING = 2
-    CLIMBING = 3
-    RESTARTING = 4
-    LANDED = 5
-    SHUTTING_DOWN = 6
-    SENSOR_ERROR = 7
+    AIMING = 1
+    LANDING = 2
+    WAITING = 3
+    CLIMBING = 4
+    RESTARTING = 5
+    LANDED = 6
+    SHUTTING_DOWN = 7
+    SENSOR_ERROR = 8
 
 @dataclass
 class LandingStatus:
@@ -91,15 +92,15 @@ class LandingModule(Node):
         self.declare_parameter('heatmap_topic', '/heatmap')
         self.declare_parameter('depth_proj_topic', '/depth_proj')
         self.declare_parameter('twist_topic', '/quadctrl/flying_sensor/ctrl_twist_sp')
-        self.declare_parameter('beta', 1/10)
-        self.declare_parameter('gain', 20)
+        self.declare_parameter('beta', 1/20)
+        self.declare_parameter('gain', 0.5)
         self.declare_parameter('z_speed_landing', 3.0)
         self.declare_parameter('z_speed_climbing', 6.0)
         self.declare_parameter('depth_smoothness', 0.5) # CARLA's values oscillate on flat surfaces
         self.declare_parameter('depth_decimation_factor', 10)
         self.declare_parameter('altitude_landed', 1)
         self.declare_parameter('safe_altitude', 50)
-        self.declare_parameter('safety_radius', 2.0)
+        self.declare_parameter('safety_radius', 1.5)
         self.declare_parameter('safety_threshold', 0.8)
         self.declare_parameter('dist_func_threshold', 0.6)
         self.declare_parameter('giveup_after_sec', 5)
@@ -109,7 +110,7 @@ class LandingModule(Node):
         self.declare_parameter('max_seg_height', 17)
         self.declare_parameter('max_landing_time_sec', 5*60)
         self.declare_parameter('min_conservative_gain', 0.5)
-        self.declare_parameter('sensor_warm_up_cycles', 10)
+        self.declare_parameter('sensor_warm_up_cycles', 5)
         self.declare_parameter('negative_prompts', NEGATIVE_PROMPTS)
         self.declare_parameter('positive_prompts', POSITIVE_PROMPTS)
         self.declare_parameter('blur_kernel_size', 15)
@@ -189,6 +190,7 @@ class LandingModule(Node):
         self.mov_avg_counter = 0
 
         self.heatmap_filtered = None
+        self.heatmap_dist_function_filtered = None
 
         self.img_msg = None
 
@@ -334,12 +336,12 @@ class LandingModule(Node):
         resize_w = int(resize_h*(heatmap.shape[1]/heatmap.shape[0]))
         resize_w = resize_w + 1-(resize_w % 2) # always odd
 
-        if self.heatmap_filtered is None:
-            self.heatmap_filtered = np.zeros((resize_h, resize_w), dtype=float)
-        
         heatmap_resized = cv2.resize(heatmap,
-                                     (self.heatmap_filtered.shape[1],self.heatmap_filtered.shape[0]),cv2.INTER_AREA)
+                                     (resize_w,resize_h),cv2.INTER_AREA)
 
+        if self.heatmap_filtered is None:
+            self.heatmap_filtered = heatmap_resized.astype(float)
+        
         # Add the received heatmap to the buffer
         self.heatmap_filtered += self.beta*(heatmap_resized-self.heatmap_filtered)
         heatmap_resized = self.heatmap_filtered.astype('uint8')
@@ -355,9 +357,20 @@ class LandingModule(Node):
         _,tmp_thresh = cv2.threshold(heatmap_resized,127,255,cv2.THRESH_BINARY)
         heatmap_dist_function = cv2.distanceTransform(tmp_thresh, cv2.DIST_L2, 5)
         cv2.normalize(heatmap_dist_function, heatmap_dist_function, 0, 1.0, cv2.NORM_MINMAX)
+        if self.heatmap_dist_function_filtered is None:
+            self.heatmap_dist_function_filtered = heatmap_dist_function
+        self.heatmap_dist_function_filtered += self.beta*(heatmap_dist_function-self.heatmap_dist_function_filtered)
+
+        heatmap_dist_function_filtered = self.heatmap_dist_function_filtered.copy()
+        radius_mult = 2 if self.landing_status.state == LandingState.AIMING else 1
+        if self.landing_status.state == LandingState.AIMING or self.landing_status.state == LandingState.LANDING:
+            safety_radius_pixels = radius_mult * int(self.safety_radius/(self.proj/heatmap_dist_function_filtered.shape[1]))
+            mask = np.zeros_like(heatmap_dist_function_filtered)
+            mask = cv2.circle(mask, (int(heatmap_center[1]),int(heatmap_center[0])), safety_radius_pixels, 255, -1)
+            heatmap_dist_function_filtered[mask!=255] = 0.0
        
         # Check area, perimeter, distance from center
-        _, dist_thrs = cv2.threshold(heatmap_dist_function, self.dist_func_threshold, 1.0, cv2.THRESH_BINARY)
+        _, dist_thrs = cv2.threshold(heatmap_dist_function_filtered, self.dist_func_threshold, 1.0, cv2.THRESH_BINARY)
         contours,_ = cv2.findContours(dist_thrs.astype('uint8'), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         xy_idx = [[1.0,0]] # if nothing is found below, move forward
         objective_values = [0.0]
@@ -366,9 +379,9 @@ class LandingModule(Node):
             perimeter = cv2.arcLength(cnt, True)
             if (area == 0) or (perimeter == 0):
                 continue
-            mask = np.zeros_like(heatmap_dist_function)
+            mask = np.zeros_like(heatmap_dist_function_filtered)
             cv2.drawContours(mask, [cnt], contourIdx=-1, color=(255), thickness=cv2.FILLED)
-            dist_cnt = heatmap_dist_function.copy()
+            dist_cnt = heatmap_dist_function_filtered.copy()
             dist_cnt[mask!=255] = 0.0
             cx, cy = np.unravel_index(dist_cnt.argmax(), dist_cnt.shape)
             d_center = np.sqrt(((heatmap_center-[cx,cy])**2).sum())
@@ -383,7 +396,12 @@ class LandingModule(Node):
 
         yc = int(-(xy_idx[0,0]*heatmap_resized.shape[0]-heatmap_center[0]))
         xc = int(xy_idx[0,1]*heatmap_resized.shape[1]+heatmap_center[1])
-        img_msg = self.cv_bridge.cv2_to_imgmsg(cv2.circle(cv2.cvtColor((dist_thrs*255).astype('uint8'), cv2.COLOR_GRAY2BGR), (xc,yc), 3, (0,0,255), -1))
+        img = cv2.circle(cv2.cvtColor((dist_thrs*255).astype('uint8'), cv2.COLOR_GRAY2BGR), (xc,yc), 3, (0,255,0), -1) # best location (green)
+        if xy_idx.shape[0]>1:
+            yc = int(-(xy_idx[1,0]*heatmap_resized.shape[0]-heatmap_center[0]))
+            xc = int(xy_idx[1,1]*heatmap_resized.shape[1]+heatmap_center[1])
+            img = cv2.circle(img, (xc,yc), 3, (255,0,0), -1) # second in line (blue)
+        img_msg = self.cv_bridge.cv2_to_imgmsg(img)
         img_msg.header.frame_id = heatmap_msg.header.frame_id
         self.heatmap_pub.publish(img_msg)
         return xy_idx
@@ -406,6 +424,7 @@ class LandingModule(Node):
         # and this is why such a simple control works.
         # Additionally, the assumption is that the maximum speed is very low
         # otherwise the moving average used in the semantic segmentation will break.
+        # TODO: make it a proper controller ...
         twist.linear.x = float(x * self.gain)  # the max bank angle is limited (tiltMax), therefore the gain is here to saturate
         twist.linear.y = float(-y * self.gain)
         twist.linear.z = float(z)
@@ -539,11 +558,14 @@ class LandingModule(Node):
         estimated_travelled_distance = self.z_speed_landing*self.landing_status.delta_time_sec # TODO:improve this estimation or add some extra margin
         altitude_landed_dynamic = self.altitude_landed if self.altitude_landed > estimated_travelled_distance else estimated_travelled_distance
         landed_trigger = self.landing_status.altitude <= altitude_landed_dynamic
-        xs_err, ys_err = xy_err[0] # normalised to the center of the image (-1 to 1)
+        # xy_err are normalised to the center of the image (-1 to 1)
+        xy_err = xy_err*self.proj/2
+        xs_err, ys_err = xy_err[0]
         # Very rudimentary filter
-        adjusted_err = math.sqrt(xs_err**2+ys_err**2)*self.proj
-        dynamic_threshold = self.safety_radius/self.landing_status.conservative_gain
+        adjusted_err = math.sqrt(xs_err**2+ys_err**2)
+        dynamic_threshold = 2*self.safety_radius/self.landing_status.conservative_gain # the segmentation is always noisy, thus the 2x
         self.landing_status.is_clear = adjusted_err < self.safety_radius
+        is_landing = adjusted_err < self.safety_radius / 2
         is_clear_dynamic_decision = adjusted_err < dynamic_threshold
         self.get_logger().info(f"Segmentation X,Y ERR, adjusted dist, dynamic threshold: {xs_err:.2f},{ys_err:.2f},{adjusted_err:.2f},{dynamic_threshold:.2f}")
         # TODO: improve the flat surface definition
@@ -564,8 +586,10 @@ class LandingModule(Node):
             self.giveup_landing_timer = 0
             self.cycles += 1
         elif self.giveup_landing_timer == 0:
-            if is_clear_dynamic_decision and is_collision_free_dynamic_decision and is_flat_dynamic_decision:
+            if is_landing:
                 self.landing_status.state = LandingState.LANDING
+            elif is_clear_dynamic_decision and is_collision_free_dynamic_decision and is_flat_dynamic_decision and self.landing_status.state != LandingState.LANDING:
+                self.landing_status.state = LandingState.AIMING
             elif self.landing_status.is_safe:
                 self.landing_status.state = LandingState.SEARCHING
             elif self.landing_status.state != LandingState.SEARCHING:
@@ -602,6 +626,10 @@ class LandingModule(Node):
         elif self.landing_status.state == LandingState.SENSOR_ERROR:
             x = y = z = 0.0
         elif self.landing_status.state == LandingState.SEARCHING:
+            x = xs_err
+            y = ys_err
+            z = 0.0
+        elif self.landing_status.state == LandingState.AIMING:
             x = xs_err
             y = ys_err
             z = 0.0
