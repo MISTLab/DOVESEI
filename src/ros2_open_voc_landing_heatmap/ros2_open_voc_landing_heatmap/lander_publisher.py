@@ -51,9 +51,12 @@ negative_prompts = ["building, house, apartment-building, warehouse, shed, garag
                     "vehicle, car, train", 
                     "lamp-post, transmission-line", 
                     "fence, wall, hedge", 
-                    "road, street, avenue, highway, drive, lane"]
+                    "road, street, avenue, highway, drive, lane",
+                    "stairs, steps, footsteps"]
 positive_prompts = ["grass, backyard, frontyard, courtyard, lawn", 
                     "sports-field, park, open-area, open-space"] 
+
+PROMPT_ENGINEERING = "a bird's eye view of a {}, ingame screen shot, bad graphics"
 
 NEGATIVE_PROMPTS = ";".join(negative_prompts)
 POSITIVE_PROMPTS = ";".join(positive_prompts)
@@ -115,7 +118,7 @@ class LandingModule(Node):
         self.declare_parameter('positive_prompts', POSITIVE_PROMPTS)
         self.declare_parameter('blur_kernel_size', 15)
         self.declare_parameter('seg_dynamic_threshold',0.10)
-        self.declare_parameter('prompt_engineering', "a bird's eye view of a {}, ingame screen shot, bad graphics")
+        self.declare_parameter('prompt_engineering', PROMPT_ENGINEERING)
 
         img_topic = self.get_parameter('img_topic').value
         depth_topic = self.get_parameter('depth_topic').value
