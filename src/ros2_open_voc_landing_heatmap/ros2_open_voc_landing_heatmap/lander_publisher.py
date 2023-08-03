@@ -56,7 +56,7 @@ negative_prompts = ["building, house, apartment-building, warehouse, shed, garag
 positive_prompts = ["grass, backyard, frontyard, courtyard, lawn", 
                     "sports-field, park, open-area, open-space"] 
 
-PROMPT_ENGINEERING = "a bird's eye view of a {}, ingame screen shot, bad graphics"
+PROMPT_ENGINEERING = "a bird's eye view of a {}, ingame screen shot, bad graphics, shade, shadows"
 
 NEGATIVE_PROMPTS = ";".join(negative_prompts)
 POSITIVE_PROMPTS = ";".join(positive_prompts)
