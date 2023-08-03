@@ -104,7 +104,7 @@ class LandingModule(Node):
         self.declare_parameter('z_speed_climbing', 6.0)
         self.declare_parameter('depth_smoothness', 0.5) # CARLA's values oscillate on flat surfaces
         self.declare_parameter('depth_decimation_factor', 10)
-        self.declare_parameter('altitude_landed', 1)
+        self.declare_parameter('altitude_landed', 1.5)
         self.declare_parameter('safe_altitude', 50)
         self.declare_parameter('safety_radius', 1.5)
         self.declare_parameter('safety_threshold', 0.8)
@@ -575,9 +575,8 @@ class LandingModule(Node):
 
 
     def state_update(self, curr_time_sec, xy_err, depth_std, depth_min):
-        estimated_travelled_distance = self.z_speed_landing*self.landing_status.delta_time_sec # TODO:improve this estimation or add some extra margin
-        altitude_landed_dynamic = self.altitude_landed if self.altitude_landed > estimated_travelled_distance else estimated_travelled_distance
-        landed_trigger = self.landing_status.altitude <= altitude_landed_dynamic
+        estimated_travelled_distance = self.z_speed*self.landing_status.delta_time_sec # TODO:improve this estimation or add some extra margin
+        landed_trigger = (self.landing_status.altitude-estimated_travelled_distance) <= self.altitude_landed
         # xy_err are normalised to the center of the image (-1 to 1)
         xy_err = xy_err*self.proj/2
         xs_err, ys_err = xy_err[0]
