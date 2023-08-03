@@ -357,7 +357,7 @@ class LandingModule(Node):
         heatmap_resized[-1,:] = 0
         
         _,tmp_thresh = cv2.threshold(heatmap_resized,127,255,cv2.THRESH_BINARY)
-        heatmap_dist_function = cv2.distanceTransform(tmp_thresh, cv2.DIST_L2, 5)
+        heatmap_dist_function = cv2.distanceTransform(tmp_thresh, cv2.DIST_L2, maskSize=3)
         cv2.normalize(heatmap_dist_function, heatmap_dist_function, 0, 1.0, cv2.NORM_MINMAX)
         if self.heatmap_dist_function_filtered is None:
             self.heatmap_dist_function_filtered = heatmap_dist_function
