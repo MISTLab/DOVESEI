@@ -401,7 +401,7 @@ class LandingModule(Node):
             yc = int(-(xy_idx[1,0]*heatmap_resized.shape[0]-heatmap_center[0]))
             xc = int(xy_idx[1,1]*heatmap_resized.shape[1]+heatmap_center[1])
             img = cv2.circle(img, (xc,yc), 3, (255,0,0), -1) # second in line (blue)
-        img_msg = self.cv_bridge.cv2_to_imgmsg(img)
+        img_msg = self.cv_bridge.cv2_to_imgmsg(img, encoding="bgr8")
         img_msg.header.frame_id = heatmap_msg.header.frame_id
         self.heatmap_pub.publish(img_msg)
         return xy_idx
