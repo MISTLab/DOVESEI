@@ -153,7 +153,12 @@ class LandingModule(Node):
         self.seg_dynamic_threshold = self.get_parameter('seg_dynamic_threshold').value
         self.add_on_set_parameters_callback(self.parameters_callback)
 
-        assert self.min_conservative_gain > 0, "Min conservative time must be bigger than zero!"
+        if not self.min_conservative_gain > 0:
+            self.get_logger().error("Min conservative time must be bigger than zero!")
+            exit(1)
+        if not self.altitude_landed >= self.safety_radius:
+            self.get_logger().error("It will never land if self.altitude_landed < self.safety_radius :(")
+            exit(1)
 
         self.gain = self.input_gain
         self.debug = debug
