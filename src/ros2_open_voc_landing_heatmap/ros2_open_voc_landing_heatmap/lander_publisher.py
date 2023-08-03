@@ -203,9 +203,6 @@ class LandingModule(Node):
 
         self.search4new_place_direction = (0,0)
 
-        self.init_time_sec = self.get_clock().now().nanoseconds/1E9
-        self.prev_time_sec = self.get_clock().now().nanoseconds/1E9
-
         self.landing_status = LandingStatus()
 
         self.cli = self.create_client(GetLandingHeatmap, 'generate_landing_heatmap',
