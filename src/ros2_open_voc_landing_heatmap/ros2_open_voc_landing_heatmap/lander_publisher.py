@@ -232,7 +232,9 @@ class LandingModule(Node):
              queue_size,
              delay_btw_msgs
              )
-        
+
+        self.init_time_sec = self.get_clock().now().nanoseconds/1E9
+        self.prev_time_sec = self.get_clock().now().nanoseconds/1E9
         tss.registerCallback(self.sense_and_act)
 
         self.get_logger().info('Ready to publish some twist messages!')
