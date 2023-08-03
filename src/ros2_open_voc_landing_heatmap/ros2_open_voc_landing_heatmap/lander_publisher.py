@@ -99,6 +99,8 @@ class LandingModule(Node):
         self.declare_parameter('gain', 0.5)
         self.declare_parameter('aiming_gain_mult', 0.5)
         self.declare_parameter('z_speed_landing', 3.0)
+        self.declare_parameter('z_min_speed_landing', 0.5)
+        self.declare_parameter('z_gain_landing', 0.02)
         self.declare_parameter('z_speed_climbing', 6.0)
         self.declare_parameter('depth_smoothness', 0.5) # CARLA's values oscillate on flat surfaces
         self.declare_parameter('depth_decimation_factor', 10)
@@ -130,6 +132,8 @@ class LandingModule(Node):
         self.input_gain = self.get_parameter('gain').value
         self.aiming_gain_mult = self.get_parameter('aiming_gain_mult').value
         self.z_speed_landing = self.get_parameter('z_speed_landing').value
+        self.z_min_speed_landing = self.get_parameter('z_min_speed_landing').value
+        self.z_gain_landing = self.get_parameter('z_gain_landing').value
         self.z_speed_climbing = self.get_parameter('z_speed_climbing').value
         self.depth_smoothness = self.get_parameter('depth_smoothness').value
         self.depth_decimation_factor = self.get_parameter('depth_decimation_factor').value
@@ -160,6 +164,7 @@ class LandingModule(Node):
             self.get_logger().error("It will never land if self.altitude_landed < self.safety_radius :(")
             exit(1)
 
+        self.z_speed = self.z_speed_landing
         self.gain = self.input_gain
         self.debug = debug
         self.savefile = savefile
@@ -168,6 +173,8 @@ class LandingModule(Node):
                         "beta": self.beta,
                         "gain": self.gain,
                         "z_speed_landing": self.z_speed_landing,
+                        "z_min_speed_landing": self.z_min_speed_landing,
+                        "z_gain_landing": self.z_gain_landing,
                         "z_speed_climbing": self.z_speed_climbing,
                         "depth_smoothnes": self.depth_smoothness,
                         "depth_decimation_factor": self.depth_decimation_factor,
@@ -649,7 +656,9 @@ class LandingModule(Node):
             z = 0.0
         elif self.landing_status.state == LandingState.LANDING:
             x = y = 0.0
-            z = -self.z_speed_landing
+            self.z_speed = self.z_gain_landing*self.z_speed_landing*self.landing_status.altitude
+            self.z_speed = (self.z_speed if self.z_speed > self.z_min_speed_landing else self.z_min_speed_landing)
+            z = -self.z_speed
         elif self.landing_status.state == LandingState.CLIMBING:
             x = y = 0.0
             z = self.z_speed_climbing
