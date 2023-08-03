@@ -97,6 +97,7 @@ class LandingModule(Node):
         self.declare_parameter('twist_topic', '/quadctrl/flying_sensor/ctrl_twist_sp')
         self.declare_parameter('beta', 1/20)
         self.declare_parameter('gain', 0.5)
+        self.declare_parameter('aiming_gain_mult', 0.5)
         self.declare_parameter('z_speed_landing', 3.0)
         self.declare_parameter('z_speed_climbing', 6.0)
         self.declare_parameter('depth_smoothness', 0.5) # CARLA's values oscillate on flat surfaces
@@ -126,7 +127,8 @@ class LandingModule(Node):
         depth_proj_topic = self.get_parameter('depth_proj_topic').value
         twist_topic = self.get_parameter('twist_topic').value
         self.beta = self.get_parameter('beta').value
-        self.gain = self.get_parameter('gain').value
+        self.input_gain = self.get_parameter('gain').value
+        self.aiming_gain_mult = self.get_parameter('aiming_gain_mult').value
         self.z_speed_landing = self.get_parameter('z_speed_landing').value
         self.z_speed_climbing = self.get_parameter('z_speed_climbing').value
         self.depth_smoothness = self.get_parameter('depth_smoothness').value
@@ -153,6 +155,7 @@ class LandingModule(Node):
 
         assert self.min_conservative_gain > 0, "Min conservative time must be bigger than zero!"
 
+        self.gain = self.input_gain
         self.debug = debug
         self.savefile = savefile
         self.savedict = { }
@@ -630,10 +633,12 @@ class LandingModule(Node):
         elif self.landing_status.state == LandingState.SENSOR_ERROR:
             x = y = z = 0.0
         elif self.landing_status.state == LandingState.SEARCHING:
+            self.gain = self.input_gain
             x = xs_err
             y = ys_err
             z = 0.0
         elif self.landing_status.state == LandingState.AIMING:
+            self.gain = self.input_gain*self.aiming_gain_mult
             x = xs_err
             y = ys_err
             z = 0.0
