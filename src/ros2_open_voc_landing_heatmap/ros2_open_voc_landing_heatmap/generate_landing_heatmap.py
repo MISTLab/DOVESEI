@@ -54,7 +54,7 @@ class GenerateLandingHeatmap(Node):
 
     def get_landing_heatmap_callback(self, request, response):
         # Inputs: request.image, request.negative_prompts, request.positive_prompts, request.prompt_engineering
-        #         request.safety_threshold, request.blur_kernel_size
+        #         request.safety_threshold, request.blur_kernel_size, request.dynamic_threshold
         # Outputs: response.heatmap, response.success
 
         self.get_logger().debug('New heatmap request received!')
@@ -92,10 +92,9 @@ class GenerateLandingHeatmap(Node):
         # Finally, resize to match input image (CLIPSeg resizes without keeping the proportions)
         logits = cv2.resize(logits, (input_image.shape[1],input_image.shape[0]), cv2.INTER_AREA)
 
-        # TODO: implement some logic to decide this...
-        response.success = True
         
         logits_threshold = logits > safety_threshold
+        response.success = False
         if request.dynamic_threshold > 0.0:
             total_pixels = np.prod(logits.shape)
             threshold_step = safety_threshold/DYNAMIC_THRESHOLD_MAXSTEPS
@@ -103,8 +102,11 @@ class GenerateLandingHeatmap(Node):
                 if (logits_threshold==True).sum()/total_pixels < request.dynamic_threshold:
                     logits_threshold = logits > (safety_threshold-threshold_step*ti)
                 else:
+                    response.success = True
                     break
             self.get_logger().warn(f'Dynamic threshold: {(safety_threshold-threshold_step*ti):.3f}')
+        else:
+            response.success = True
         
         # returns heatmap as grayscale image
         response.heatmap = self.cv_bridge.cv2_to_imgmsg((logits_threshold*255).astype('uint8'), encoding='mono8')
