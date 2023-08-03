@@ -576,7 +576,7 @@ class LandingModule(Node):
         self.landing_status.is_flat = depth_std < self.depth_smoothness
         is_flat_dynamic_decision = depth_std < self.depth_smoothness/self.landing_status.conservative_gain
         # TODO: improve the is_collision_free definition
-        self.landing_status.is_collision_free = (depth_min-estimated_travelled_distance) > self.safety_radius or landed_trigger
+        self.landing_status.is_collision_free = depth_min > self.safety_radius or landed_trigger
         is_collision_free_dynamic_decision = self.landing_status.is_collision_free
         is_landing = adjusted_err < self.safety_radius / 2 and is_collision_free_dynamic_decision and is_flat_dynamic_decision
 
