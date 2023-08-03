@@ -548,6 +548,9 @@ class LandingModule(Node):
                     self.publish_status()
                     self.publish_twist(x,y,z)
                 else:
+                    x,y,z = self.state_update(curr_time_sec, np.asarray([[1000.0,1000.0]]), 1000.0, 0.0)
+                    self.publish_status()
+                    self.publish_twist(x,y,z)
                     self.get_logger().error("Empty heatmap received!")
                 self.heatmap_result = None
                 if self.landing_status.state == LandingState.LANDED:
