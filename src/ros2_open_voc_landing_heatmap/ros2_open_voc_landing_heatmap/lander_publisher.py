@@ -539,11 +539,14 @@ class LandingModule(Node):
             self.req.dynamic_threshold = self.seg_dynamic_threshold
 
             def future_done_callback(future):
-                heatmap_msg = future.result().heatmap
-                xy_err = self.get_xy_error_from_semantics(heatmap_msg)
-                x,y,z = self.state_update(curr_time_sec, xy_err, depth_std, depth_min)
-                self.publish_status()
-                self.publish_twist(x,y,z)
+                if future.result().success == True:
+                    heatmap_msg = future.result().heatmap
+                    xy_err = self.get_xy_error_from_semantics(heatmap_msg)
+                    x,y,z = self.state_update(curr_time_sec, xy_err, depth_std, depth_min)
+                    self.publish_status()
+                    self.publish_twist(x,y,z)
+                else:
+                    self.get_logger().error("Empty heatmap received!")
                 self.heatmap_result = None
                 if self.landing_status.state == LandingState.LANDED:
                     exit(0)
