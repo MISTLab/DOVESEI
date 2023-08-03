@@ -14,9 +14,10 @@ else:
 
 from ros2_open_voc_landing_heatmap_srv.srv import GetLandingHeatmap
 import rclpy
-from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
+# from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
 from rclpy.node import Node
 from sensor_msgs.msg import Image as ImageMsg
+from sensor_msgs.msg import Imu
 from cv_bridge import CvBridge
 
 LABELS = {
@@ -50,41 +51,35 @@ PLACES2LAND = ["Terrain", "Ground", "Other", "SideWalk", "Unlabeled"]
 CLIPSEG_OUTPUT_SIZE = 352
 
 class GenerateLandingHeatmap(Node):
-
     def __init__(self):
         super().__init__('generate_landing_heatmap')
         self.declare_parameter('img_topic', '/carla/flying_sensor/semantic_segmentation_down/image')
-        self.declare_parameter('blur_kernel_size', 15)
-        #self.add_on_set_parameters_callback(self.parameters_callback)
-        img_topic = self.get_parameter('img_topic').value
-        self.blur_kernel_size = self.get_parameter('blur_kernel_size').value
-
-        # Generate the distance matrix (based on the output size of CLIPSeg - CLIPSEG_OUTPUT_SIZE)
-        # It has the distance from the centre of the matrix
-        centre_y = CLIPSEG_OUTPUT_SIZE/2
-        centre_x = CLIPSEG_OUTPUT_SIZE/2
-        max_dist = np.sqrt((centre_y)**2+(centre_x)**2)
-        local_indices = np.transpose(np.nonzero(np.ones((CLIPSEG_OUTPUT_SIZE,CLIPSEG_OUTPUT_SIZE), dtype=float)))
-        dists = (max_dist-np.sqrt(((local_indices-[centre_y,centre_x])**2).sum(axis=1)))
-        dists -= dists.min()
-        dists /= dists.max()
-        self.final_dists = np.zeros((CLIPSEG_OUTPUT_SIZE,CLIPSEG_OUTPUT_SIZE), dtype=float)
-        for i,(j,k) in enumerate(local_indices):
-            self.final_dists[j,k] = dists[i]
-
+        self.img_topic = self.get_parameter('img_topic').value
         self.cv_bridge = CvBridge()
-        self.last_img = None
 
-        qos_prof = QoSProfile(history=QoSHistoryPolicy.KEEP_LAST, depth=1)
+        self.get_logger().warn('Waiting for the simulator...')
+        self.check_flying_sensor_alive = self.create_subscription(
+            Imu,
+            '/quadsim/flying_sensor/imu',
+            self.start_node,
+            1)
+
+
+    def start_node(self, msg):
+        self.get_logger().warn('Simulator is online!')
+        self.destroy_subscription(self.check_flying_sensor_alive) # we don't need this subscriber anymore...
+
+        self.last_img = None
+        self.final_img_pub = self.create_publisher(ImageMsg, "/final_heatmap",1) ##DEBUG
+
         self.img_sub = self.create_subscription(
             ImageMsg,
-            img_topic,
-            self.img_sub_cb, qos_profile=qos_prof)
-        
-        self.srv = self.create_service(GetLandingHeatmap, 'generate_landing_heatmap', self.get_landing_heatmap_callback)
-        if torch.cuda.is_available(): self.get_logger().warn('generate_landing_heatmap is using cuda!')
-        self.get_logger().info('generate_landing_heatmap is up and running!')
+            self.img_topic,
+            self.img_sub_cb, 1)
 
+        self.srv = self.create_service(GetLandingHeatmap, 'generate_landing_heatmap', self.get_landing_heatmap_callback)
+        self.get_logger().info('generate_landing_heatmap is up and running!')
+        
 
     def img_sub_cb(self, msg):
             self.last_img = cv2.resize(self.cv_bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8'),(CLIPSEG_OUTPUT_SIZE,CLIPSEG_OUTPUT_SIZE))
@@ -95,21 +90,22 @@ class GenerateLandingHeatmap(Node):
         return (img[...,2] == LABELS[label][0]) & (img[...,1] == LABELS[label][1]) & (img[...,0] == LABELS[label][2])
     
     def get_landing_heatmap_callback(self, request, response):
-        # Inputs: request.image, request.prompts, request.erosion_size
+        # Inputs: request.image, request.negative_prompts, request.positive_prompts, request.prompt_engineering
+        #         request.safety_threshold, request.blur_kernel_size, request.dynamic_threshold
         # Outputs: response.heatmap, response.success
+
+        self.get_logger().debug('New heatmap request received!')
 
         if self.last_img is None:
             response.success = False
             self.get_logger().warn(f'Empty response!')
             return response
 
-        input_image = self.cv_bridge.imgmsg_to_cv2(request.image, desired_encoding='rgb8')
-        prompts = request.prompts.split(';')
-        erosion_size = request.erosion_size
-
-        element = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, 
-                                            (2 * erosion_size + 1, 2 * erosion_size + 1),
-                                            (erosion_size, erosion_size))
+        input_image_msg = request.image
+        input_image = self.cv_bridge.imgmsg_to_cv2(input_image_msg, desired_encoding='rgb8')
+        safety_threshold = request.safety_threshold
+        blur_kernel_size = request.blur_kernel_size
+        
        
         # places to land mask
         logits = np.ones(self.last_img.shape[:2])==0
@@ -117,28 +113,29 @@ class GenerateLandingHeatmap(Node):
             logits |= self.get_mask(self.last_img, label)
         logits = logits.astype('float32')
 
-        # logits = self.get_mask(self.last_img, "SideWalk").astype('float32')
+        kernel = np.ones((3,3),np.uint8)
+        logits = cv2.erode(logits,kernel,iterations=2)
 
-        # Blur to smooth the ViT patches
-        logits = cv2.blur(logits,(self.blur_kernel_size,self.blur_kernel_size))
+        # Blur
+        logits = cv2.blur(logits,(blur_kernel_size, blur_kernel_size))
 
-    
-        logits = cv2.erode(logits, element)
-
-        # Apply the distance gradient
-        logits = logits*self.final_dists
-
-        # Finally, resize to match input image (CLIPSeg resizes without keeping the proportions)
+        # Finally, resize to match input image
         logits = cv2.resize(logits, (input_image.shape[1],input_image.shape[0]), cv2.INTER_AREA)
 
-        # and convert to a grayscale image (0 to 255)
-        logits = (logits*255).astype('uint8')
-
-        # TODO: implement some logit to decide this...
-        response.success = True
+        logits = logits > 0.2
+        response.success = False
+        if request.dynamic_threshold > 0.0:
+            total_pixels = np.prod(logits.shape)
+            if not ((logits==True).sum()/total_pixels < request.dynamic_threshold):
+                response.success = True
+        else:
+            response.success = True
         
         # returns heatmap as grayscale image
-        response.heatmap = self.cv_bridge.cv2_to_imgmsg(logits, encoding='mono8')
+        response.heatmap = self.cv_bridge.cv2_to_imgmsg((logits*255).astype('uint8'), encoding='mono8')
+        response.heatmap.header.frame_id = input_image_msg.header.frame_id
+
+        self.final_img_pub.publish(response.heatmap)##DEBUG
 
         return response
 
