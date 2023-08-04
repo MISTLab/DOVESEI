@@ -25,7 +25,7 @@ negative_prompts = ["building, house, apartment-building, warehouse, shed, garag
 positive_prompts = ["grass, backyard, frontyard, courtyard, lawn", 
                     "sports-field, park, open-area, open-space"] 
 
-PROMPT_ENGINEERING = "a bird's eye view of a {}, ingame screen shot, bad graphics"
+PROMPT_ENGINEERING = "a bird's eye view of a {}, ingame screen shot, bad graphics, shade, shadows"
 
 NEGATIVE_PROMPTS = ";".join(negative_prompts)
 POSITIVE_PROMPTS = ";".join(positive_prompts)
@@ -168,10 +168,12 @@ def generate_launch_description():
         'gain': (0.5, ''),
         'aiming_gain_mult': (0.5, ''),
         'z_speed_landing': (3.0, ''),
+        'z_min_speed_landing': (0.5, ''),
+        'z_gain_landing': (0.02, ''),
         'z_speed_climbing': (6.0, ''),
         'depth_smoothness': (0.5, ''), # CARLA's values oscillate on flat surfaces
         'depth_decimation_factor': (10, ''),
-        'altitude_landed': (1, ''),
+        'altitude_landed': (1.5, ''),
         'safe_altitude': (50, ''),
         'safety_radius': (1.5, ''),
         'safety_threshold': (0.8, ''),
