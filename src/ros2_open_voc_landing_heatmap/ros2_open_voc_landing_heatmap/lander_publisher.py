@@ -113,7 +113,6 @@ class LandingModule(Node):
         self.declare_parameter('max_depth_sensing', 20)
         self.declare_parameter('use_random_search4new_place', False)
         self.declare_parameter('search4new_place_max_time', 60)
-        self.declare_parameter('max_seg_height', 17)
         self.declare_parameter('max_landing_time_sec', 5*60)
         self.declare_parameter('min_conservative_gain', 0.5)
         self.declare_parameter('sensor_warm_up_cycles', 5)
@@ -146,7 +145,6 @@ class LandingModule(Node):
         self.max_depth_sensing = self.get_parameter('max_depth_sensing').value
         self.use_random_search4new_place = self.get_parameter('use_random_search4new_place').value
         self.search4new_place_max_time = self.get_parameter('search4new_place_max_time').value
-        self.max_seg_height = self.get_parameter('max_seg_height').value
         self.max_landing_time_sec = self.get_parameter('max_landing_time_sec').value
         self.min_conservative_gain = self.get_parameter('min_conservative_gain').value
         self.sensor_warm_up_cycles = self.get_parameter('sensor_warm_up_cycles').value
@@ -187,7 +185,6 @@ class LandingModule(Node):
                         "max_depth_sensing": self.max_depth_sensing,
                         "use_random_search4new_place": self.use_random_search4new_place,
                         "search4new_place_max_time": self.search4new_place_max_time,
-                        "max_seg_height": self.max_seg_height,
                         "max_landing_time_sec": self.max_landing_time_sec,
                         "min_conservative_gain": self.min_conservative_gain,
                         "sensor_warm_up_cycles": self.sensor_warm_up_cycles,
