@@ -31,8 +31,8 @@ class GenerateLandingHeatmap(Node):
 
         self.get_logger().warn('Waiting for the simulator...')
         self.check_flying_sensor_alive = self.create_subscription(
-            Imu,
-            '/quadsim/flying_sensor/imu',
+            ImageMsg,
+            '/carla/flying_sensor/rgb_down/image',
             self.start_node,
             1)
 
