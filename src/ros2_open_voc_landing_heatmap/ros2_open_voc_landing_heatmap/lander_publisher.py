@@ -575,7 +575,7 @@ class LandingModule(Node):
         estimated_travelled_distance = self.z_speed*self.landing_status.delta_time_sec # TODO:improve this estimation or add some extra margin
         landed_trigger = (self.landing_status.altitude-estimated_travelled_distance) <= self.altitude_landed
         # xy_err are normalised to the center of the image (-1 to 1)
-        xy_err = xy_err*self.proj/2
+        xy_err = xy_err*self.proj
         xs_err, ys_err = xy_err[0]
         # Very rudimentary filter
         adjusted_err = math.sqrt(xs_err**2+ys_err**2)
