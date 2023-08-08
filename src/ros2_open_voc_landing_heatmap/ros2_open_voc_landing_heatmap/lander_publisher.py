@@ -215,6 +215,10 @@ class LandingModule(Node):
 
         self.search4new_place_direction = (0,0)
 
+        self.int_x = 0.0
+        self.int_y = 0.0
+        self.int_x_sat = self.int_y_sat = 1.0
+
         self.landing_status = LandingStatus()
 
         self.cli = self.create_client(GetLandingHeatmap, 'generate_landing_heatmap',
@@ -436,8 +440,14 @@ class LandingModule(Node):
         # Additionally, the assumption is that the maximum speed is very low
         # otherwise the moving average used in the semantic segmentation will break.
         # TODO: make it a proper controller ...
-        twist.linear.x = float(x * self.gain)  # the max bank angle is limited (tiltMax), therefore the gain is here to saturate
-        twist.linear.y = float(-y * self.gain)
+        
+        self.int_x += x
+        self.int_y += y     
+        self.int_x = self.int_x if abs(self.int_x) <= self.int_x_sat else np.sign(self.int_x)*self.int_x_sat
+        self.int_y = self.int_y if abs(self.int_y) <= self.int_y_sat else np.sign(self.int_y)*self.int_y_sat
+
+        twist.linear.x = float(x * self.gain + self.int_x*self.gain)  # the max bank angle is limited (tiltMax), therefore the gain is here to saturate
+        twist.linear.y = -float(y * self.gain + self.int_y*self.gain)
         twist.linear.z = float(z)
         
         twist.angular.x = 0.0
