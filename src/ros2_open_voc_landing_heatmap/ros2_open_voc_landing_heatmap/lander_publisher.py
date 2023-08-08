@@ -601,7 +601,9 @@ class LandingModule(Node):
         # TODO: improve the is_collision_free definition
         self.landing_status.is_collision_free = depth_min > self.safety_radius or landed_trigger
         is_collision_free_dynamic_decision = self.landing_status.is_collision_free
-        is_landing = adjusted_err < self.safety_radius / 2 and is_collision_free_dynamic_decision and is_flat_dynamic_decision
+
+        is_landing = adjusted_err < self.safety_radius and is_collision_free_dynamic_decision and is_flat_dynamic_decision
+        is_aiming = self.landing_status.is_safe and is_clear_dynamic_decision and is_collision_free_dynamic_decision and is_flat_dynamic_decision
 
         # Trying to isolate all the sensing above 
         # and the state switching decisions below.
@@ -615,7 +617,7 @@ class LandingModule(Node):
         elif self.giveup_landing_timer == 0:
             if is_landing:
                 self.landing_status.state = LandingState.LANDING
-            elif self.landing_status.is_safe and is_clear_dynamic_decision and is_collision_free_dynamic_decision and is_flat_dynamic_decision and self.landing_status.state != LandingState.LANDING:
+            elif is_aiming and self.landing_status.state != LandingState.LANDING:
                 self.landing_status.state = LandingState.AIMING
             elif self.landing_status.is_safe:
                 self.landing_status.state = LandingState.SEARCHING
@@ -644,7 +646,7 @@ class LandingModule(Node):
                         self.landing_status.state = LandingState.SEARCHING
                 else:
                     self.landing_status.state = LandingState.CLIMBING          
-            elif is_clear_dynamic_decision and is_collision_free_dynamic_decision and is_flat_dynamic_decision:
+            elif is_landing:
                 self.landing_status.state = LandingState.LANDING
                 self.giveup_landing_timer = 0
 
