@@ -377,7 +377,7 @@ class LandingModule(Node):
         self.heatmap_dist_function_filtered = heatmap_dist_function
 
         heatmap_dist_function_filtered = self.heatmap_dist_function_filtered.copy()
-        radius_mult = 2 if self.landing_status.state == LandingState.AIMING else 1
+        radius_mult = 20 if self.landing_status.state == LandingState.AIMING else 10
         if self.landing_status.state == LandingState.AIMING or self.landing_status.state == LandingState.LANDING or self.landing_status.state == LandingState.WAITING:
             safety_radius_pixels = radius_mult * int(self.safety_radius/(self.proj/heatmap_dist_function_filtered.shape[1]))
             mask = np.zeros_like(heatmap_dist_function_filtered)
