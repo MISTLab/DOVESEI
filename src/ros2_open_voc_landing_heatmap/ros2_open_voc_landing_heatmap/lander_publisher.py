@@ -413,12 +413,13 @@ class LandingModule(Node):
 
         yc = int(-(xy_idx[0,0]*heatmap_resized.shape[0]-heatmap_center[0]))
         xc = int(xy_idx[0,1]*heatmap_resized.shape[1]+heatmap_center[1])
-        img = cv2.circle(cv2.cvtColor((dist_thrs*255).astype('uint8'), cv2.COLOR_GRAY2BGR), (xc,yc), 3, (0,255,0), -1) # best location (green)
+        img = cv2.circle(cv2.cvtColor((dist_thrs*255).astype('uint8'), cv2.COLOR_GRAY2BGR), (xc,yc), 10, (0,255,0), -1) # best location (green)
         if xy_idx.shape[0]>1:
             yc = int(-(xy_idx[1,0]*heatmap_resized.shape[0]-heatmap_center[0]))
             xc = int(xy_idx[1,1]*heatmap_resized.shape[1]+heatmap_center[1])
-            img = cv2.circle(img, (xc,yc), 3, (255,0,0), -1) # second in line (blue)
+            img = cv2.circle(img, (xc,yc), 10, (255,0,0), -1) # second in line (blue)
         img_msg = self.cv_bridge.cv2_to_imgmsg(img, encoding="bgr8")
+
         img_msg.header.frame_id = heatmap_msg.header.frame_id
         self.heatmap_pub.publish(img_msg)
         return xy_idx
