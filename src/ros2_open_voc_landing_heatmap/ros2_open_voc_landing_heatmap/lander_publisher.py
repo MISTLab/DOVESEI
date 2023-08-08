@@ -193,6 +193,7 @@ class LandingModule(Node):
                         "blur_kernel_size": self.blur_kernel_size,
                         "prompt_engineering": self.prompt_engineering
                         }
+        self.savedict[0] = self.curr_params
 
         self.cycles = 0
         
@@ -506,8 +507,7 @@ class LandingModule(Node):
                 'is_flat': str(self.landing_status.is_flat),
                 'position': self.curr_pos,
                 'conservative_gain': self.landing_status.conservative_gain,
-                'loop_freq': 1/self.landing_status.delta_time_sec,
-                'params': self.curr_params
+                'loop_freq': 1/self.landing_status.delta_time_sec
             }
             self.savedict[int(self.landing_status.elapsed_time_sec*1000)] = tmp_dict
 
