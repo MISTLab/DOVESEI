@@ -91,6 +91,7 @@ class AerialImagesPublisher(Node):
 
         self.publish_transform(*self.currPos)
         self.get_logger().info(f'Current position: {-self.currPos[1],-self.currPos[0],self.currPos[2]}')
+        self.get_logger().info(f'Current lat/lon: {lat, lon}')
 
 
     def publish_transform(self, x, y, z, parent="map", child="flying_sensor"):
