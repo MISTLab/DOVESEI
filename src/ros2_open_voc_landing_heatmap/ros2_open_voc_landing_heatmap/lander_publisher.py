@@ -603,7 +603,7 @@ class LandingModule(Node):
         elif self.giveup_landing_timer == 0:
             if is_landing:
                 self.landing_status.state = LandingState.LANDING
-            elif is_clear_dynamic_decision and is_collision_free_dynamic_decision and is_flat_dynamic_decision and self.landing_status.state != LandingState.LANDING:
+            elif self.landing_status.is_safe and is_clear_dynamic_decision and is_collision_free_dynamic_decision and is_flat_dynamic_decision and self.landing_status.state != LandingState.LANDING:
                 self.landing_status.state = LandingState.AIMING
             elif self.landing_status.is_safe:
                 self.landing_status.state = LandingState.SEARCHING
@@ -649,7 +649,11 @@ class LandingModule(Node):
             self.gain = self.input_gain*self.aiming_gain_mult
             x = xs_err
             y = ys_err
-            z = 0.0
+            # It's hard to aim when the UAV is too high, so it should descend because 
+            # the AIMING state means there's a good landing spot candidate below anyway
+            # 1/3 of the landing speed...
+            self.z_speed = 0.3*self.z_gain_landing*self.z_speed_landing*self.landing_status.altitude
+            z = -self.z_speed
         elif self.landing_status.state == LandingState.LANDING:
             x = y = 0.0
             self.z_speed = self.z_gain_landing*self.z_speed_landing*self.landing_status.altitude
