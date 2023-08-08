@@ -17,7 +17,7 @@ setup(
         ('share/' + package_name + '/cfg', glob('cfg/*.json')),
         ('share/' + package_name, glob('launch/*.launch.py'))
     ],
-    install_requires=['setuptools', 'AerialViewGenerator @ git+https://github.com/ricardodeazambuja/AerialViewGenerator.git'],
+    install_requires=['setuptools'],
     # setup_requires will download aerialviewgenerator from github during setup
     setup_requires=['AerialViewGenerator @ git+https://github.com/ricardodeazambuja/AerialViewGenerator.git'],
     # however, the directory won't be there while it's reading the info here, therefore it needs to be hardcoded
