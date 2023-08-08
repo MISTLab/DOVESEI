@@ -90,7 +90,7 @@ def generate_launch_description():
         'heatmap_topic': ('/heatmap', 'Topic where to publish the heatmap'),
         'depth_proj_topic': ('/depth_proj', 'Topic where to publish the filtered depth (only the safety radius projection)'),
         'twist_topic': ('/quadctrl/flying_sensor/ctrl_twist_sp', 'Topic to publish the velocity setpoints'),
-        'beta': (1/20, 'Gain used with the semantic segmentation filter'),
+        'beta': (1/10, 'Gain used with the semantic segmentation filter'),
         'gain': (0.5, 'Gain used with the error to publish velocity setpoints'),
         'aiming_gain_mult': (0.5, 'Multiplier applied to the gain when at AIMING state'),
         'z_speed_landing': (3.0, 'Base value for landing speed'),

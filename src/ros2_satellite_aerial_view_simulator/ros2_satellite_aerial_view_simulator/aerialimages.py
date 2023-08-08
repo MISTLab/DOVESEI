@@ -90,8 +90,7 @@ class AerialImagesPublisher(Node):
         self.depth_pub.publish(self.fake_depth)
 
         self.publish_transform(*self.currPos)
-
-        self.get_logger().info(f'Current position: {self.currPos}')
+        self.get_logger().info(f'Current position: {-self.currPos[1],-self.currPos[0],self.currPos[2]}')
 
 
     def publish_transform(self, x, y, z, parent="map", child="flying_sensor"):
@@ -122,7 +121,7 @@ def main():
         pass
     finally:
         aerial_images.get_logger().info(f'Shutting aerial_images down...')
-        aerial_images.get_logger().error(f'Final lat/lon: {aerial_images.currLatLon}')
+        aerial_images.get_logger().error(f'Final lat/lon: {aerial_images.currLatLon} -  altitude: {aerial_images.currPos[2]}')
         rclpy.shutdown()
 
 
