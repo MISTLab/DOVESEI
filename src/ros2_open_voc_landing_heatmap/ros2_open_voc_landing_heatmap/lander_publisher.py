@@ -658,6 +658,7 @@ class LandingModule(Node):
             self.gain = self.input_gain
             x = xs_err
             y = ys_err
+            self.int_x = self.int_y = 0.0 # it should not move in the XY during landing...
             z = 0.0
         elif self.landing_status.state == LandingState.AIMING:
             self.gain = self.input_gain*self.aiming_gain_mult
@@ -666,10 +667,14 @@ class LandingModule(Node):
             # It's hard to aim when the UAV is too high, so it should descend because 
             # the AIMING state means there's a good landing spot candidate below anyway
             # 1/3 of the landing speed...
-            self.z_speed = 0.3*self.z_gain_landing*self.z_speed_landing*self.landing_status.altitude
-            z = -self.z_speed
+            if self.landing_status.altitude + estimated_travelled_distance >= self.safe_altitude*1.1:
+                self.z_speed = 0.3*self.z_gain_landing*self.z_speed_landing*self.landing_status.altitude
+                z = -self.z_speed
+            else:
+                z = 0.0
         elif self.landing_status.state == LandingState.LANDING:
             x = y = 0.0
+            self.int_x = self.int_y = 0.0 # integrator is only for the AIMING state
             self.z_speed = self.z_gain_landing*self.z_speed_landing*self.landing_status.altitude
             self.z_speed = (self.z_speed if self.z_speed > self.z_min_speed_landing else self.z_min_speed_landing)
             z = -self.z_speed
