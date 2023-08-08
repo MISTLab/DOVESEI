@@ -319,7 +319,7 @@ class LandingModule(Node):
                                                 depth.shape[0]//self.depth_decimation_factor), cv2.INTER_AREA)
 
         # self.safety_radius and self.proj are in metres
-        safety_radius_pixels = int(2*self.safety_radius/(self.proj/depth_proj_resized.shape[1]))
+        safety_radius_pixels = int((depth_proj_resized.shape[1]/2)*self.safety_radius/self.proj)
         mask = np.zeros_like(depth_proj_resized)
         mask = cv2.circle(mask, (depth_proj_resized.shape[1]//2,depth_proj_resized.shape[0]//2), safety_radius_pixels, 255, -1)
 
@@ -379,7 +379,7 @@ class LandingModule(Node):
         heatmap_dist_function_filtered = self.heatmap_dist_function_filtered.copy()
         radius_mult = 20 if self.landing_status.state == LandingState.AIMING else 10
         if self.landing_status.state == LandingState.AIMING or self.landing_status.state == LandingState.LANDING or self.landing_status.state == LandingState.WAITING:
-            safety_radius_pixels = radius_mult * int(self.safety_radius/(self.proj/heatmap_dist_function_filtered.shape[1]))
+            safety_radius_pixels = int(radius_mult*(heatmap_dist_function_filtered.shape[1]/2)*self.safety_radius/self.proj)
             mask = np.zeros_like(heatmap_dist_function_filtered)
             mask = cv2.circle(mask, (int(heatmap_center[1]),int(heatmap_center[0])), safety_radius_pixels, 255, -1)
             heatmap_dist_function_filtered[mask!=255] = 0.0
@@ -536,7 +536,7 @@ class LandingModule(Node):
             negative_prompts = self.negative_prompts
             positive_prompts = self.positive_prompts
 
-            self.proj = math.tan(FOV/2)*self.landing_status.altitude # [m]
+            self.proj = math.tan(FOV/2)*self.landing_status.altitude # [m] it's half width because FOV/2
 
             # The conservative_gain is a very simple (hacky?) way to force the system to relax its decisions as time passes 
             # because at the end of the day it will be limited by its battery and the worst scenario is to fall from the sky
