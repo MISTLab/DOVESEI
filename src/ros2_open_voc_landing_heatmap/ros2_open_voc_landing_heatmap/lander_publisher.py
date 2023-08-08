@@ -594,7 +594,7 @@ class LandingModule(Node):
         dynamic_threshold = 2*self.safety_radius/self.landing_status.conservative_gain # the segmentation is always noisy, thus the 2x
         self.landing_status.is_clear = adjusted_err < self.safety_radius
         is_clear_dynamic_decision = adjusted_err < dynamic_threshold
-        self.get_logger().info(f"Segmentation X,Y ERR, adjusted dist, dynamic threshold: {xs_err:.2f},{ys_err:.2f},{adjusted_err:.2f},{dynamic_threshold:.2f}")
+        self.get_logger().info(f"Segmentation X,Y ERR, adjusted dist, dynamic threshold: {xs_err:.2f},{-ys_err:.2f},{adjusted_err:.2f},{dynamic_threshold:.2f}")
         # TODO: improve the flat surface definition
         self.landing_status.is_flat = depth_std < self.depth_smoothness
         is_flat_dynamic_decision = depth_std < self.depth_smoothness/self.landing_status.conservative_gain
