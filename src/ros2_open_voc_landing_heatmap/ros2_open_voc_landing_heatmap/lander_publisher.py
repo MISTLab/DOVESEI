@@ -348,7 +348,7 @@ class LandingModule(Node):
         # heatmap[-50:,-50:] = 255
 
         # Reduce the received heatmap size
-        resize_h = 100
+        resize_h = 352
         resize_w = int(resize_h*(heatmap.shape[1]/heatmap.shape[0]))
         resize_w = resize_w + 1-(resize_w % 2) # always odd
 
@@ -373,9 +373,8 @@ class LandingModule(Node):
         _,tmp_thresh = cv2.threshold(heatmap_resized,127,255,cv2.THRESH_BINARY)
         heatmap_dist_function = cv2.distanceTransform(tmp_thresh, cv2.DIST_L2, maskSize=3)
         cv2.normalize(heatmap_dist_function, heatmap_dist_function, 0, 1.0, cv2.NORM_MINMAX)
-        if self.heatmap_dist_function_filtered is None:
-            self.heatmap_dist_function_filtered = heatmap_dist_function
-        self.heatmap_dist_function_filtered += self.beta*(heatmap_dist_function-self.heatmap_dist_function_filtered)
+        
+        self.heatmap_dist_function_filtered = heatmap_dist_function
 
         heatmap_dist_function_filtered = self.heatmap_dist_function_filtered.copy()
         radius_mult = 2 if self.landing_status.state == LandingState.AIMING else 1
