@@ -396,11 +396,13 @@ class LandingModule(Node):
                 continue
             mask = np.zeros_like(heatmap_dist_function_filtered)
             cv2.drawContours(mask, [cnt], contourIdx=-1, color=(255), thickness=cv2.FILLED)
+            # now mask has only the current contour (filled)
             dist_cnt = heatmap_dist_function_filtered.copy()
+            # using the previously masked heatmap, we expose only the pixels under the contour
             dist_cnt[mask!=255] = 0.0
             cx, cy = np.unravel_index(dist_cnt.argmax(), dist_cnt.shape)
-            d_center = np.sqrt(((heatmap_center-[cx,cy])**2).sum())
-            objective = (1/perimeter)*area/(d_center+1) # complex shapes will have longer perimeter
+            dist2center = np.sqrt(((heatmap_center-[cx,cy])**2).sum())
+            objective = (1/perimeter)*area/(dist2center+1) # complex shapes will have longer perimeter
             objective_values.append(objective)
             x = (heatmap_center[0] - cx)/heatmap_resized.shape[0]
             y = -(heatmap_center[1] - cy)/heatmap_resized.shape[1]
