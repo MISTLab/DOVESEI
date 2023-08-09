@@ -19,7 +19,7 @@ negative_prompts = ["building, house, apartment-building, warehouse, shed, garag
                     "people, crowd", 
                     "vehicle, car, train", 
                     "lamp-post, transmission-line", 
-                    "fence, wall, hedgerow", "shrubs", 
+                    "fence, wall, hedgerow", 
                     "road, street, avenue, highway, drive, lane",
                     "stairs, steps, footsteps"]
 positive_prompts = ["grass, backyard, frontyard, courtyard, lawn", 
