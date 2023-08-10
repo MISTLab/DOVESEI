@@ -746,19 +746,5 @@ def main():
         landing_module.on_shutdown_cb()
         rclpy.shutdown()
 
-    # executor = MultiThreadedExecutor(num_threads=2)
-    # executor.add_node(landing_module)
-    # try:
-    #     executor.spin()
-
-    # except KeyboardInterrupt:
-    #     pass
-
-    # finally:
-    #     landing_module.on_shutdown_cb()
-    #     executor.shutdown()
-    #     landing_module.destroy_node()
-
-
 if __name__ == '__main__':
     main()
