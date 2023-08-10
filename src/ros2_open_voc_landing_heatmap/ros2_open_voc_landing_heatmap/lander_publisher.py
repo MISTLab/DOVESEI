@@ -211,6 +211,7 @@ class LandingModule(Node):
         self.mov_avg_counter = 0
 
         self.heatmap_filtered = None
+        self.focus_mask_radius = None
 
         self.img_msg = None
 
@@ -361,6 +362,11 @@ class LandingModule(Node):
 
         if self.heatmap_filtered is None:
             self.heatmap_filtered = heatmap_resized.astype(float)
+
+        if self.focus_mask_radius is None:
+            self.focus_mask_radius = math.sqrt(resize_w**2+resize_h**2)
+            self.focus_mask_radius_max = self.focus_mask_radius
+            self.safety_radius_pixels = 0
         
         # Add the received heatmap to the buffer
         self.heatmap_filtered += self.beta*(heatmap_resized-self.heatmap_filtered)
@@ -375,6 +381,25 @@ class LandingModule(Node):
         heatmap_resized[-1,:] = 0
         
         _,tmp_thresh = cv2.threshold(heatmap_resized,127,255,cv2.THRESH_BINARY)
+
+        radius_mult = 6 if self.landing_status.state == LandingState.AIMING else 2
+
+        if self.landing_status.state == LandingState.AIMING:
+            radius_mult = 6
+            self.safety_radius_pixels = int(radius_mult*(tmp_thresh.shape[1]/2)*self.safety_radius/self.proj)
+        elif self.landing_status.state == LandingState.LANDING:
+            radius_mult = 2
+            self.safety_radius_pixels = int(radius_mult*(tmp_thresh.shape[1]/2)*self.safety_radius/self.proj)
+        elif self.landing_status.state == LandingState.WAITING:
+            self.safety_radius_pixels = self.focus_mask_radius
+        else:
+            self.safety_radius_pixels = self.focus_mask_radius_max
+    
+        self.focus_mask_radius += (self.safety_radius_pixels - self.focus_mask_radius)*0.1
+        mask = np.zeros_like(tmp_thresh)
+        mask = cv2.circle(mask, (int(heatmap_center[1]),int(heatmap_center[0])), int(self.focus_mask_radius), 255, -1)
+        tmp_thresh[mask!=255] = 0.0
+
         heatmap_dist_function = cv2.distanceTransform(tmp_thresh, cv2.DIST_L2, maskSize=3)
         cv2.normalize(heatmap_dist_function, heatmap_dist_function, 0, 1.0, cv2.NORM_MINMAX)
                
