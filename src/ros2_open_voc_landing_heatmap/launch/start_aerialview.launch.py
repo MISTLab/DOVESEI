@@ -91,7 +91,7 @@ def generate_launch_description():
         'heatmap_topic': ('/heatmap', 'Topic where to publish the heatmap'),
         'depth_proj_topic': ('/depth_proj', 'Topic where to publish the filtered depth (only the safety radius projection)'),
         'twist_topic': ('/quadctrl/flying_sensor/ctrl_twist_sp', 'Topic to publish the velocity setpoints'),
-        'beta': (1/10, 'Gain used with the semantic segmentation filter'),
+        'beta': (1/30, 'Gain used with the semantic segmentation filter'),
         'gain': (0.5, 'Gain used with the error to publish velocity setpoints'),
         'aiming_gain_mult': (0.5, 'Multiplier applied to the gain when at AIMING state'),
         'z_speed_landing': (3.0, 'Base value for landing speed'),
@@ -100,10 +100,10 @@ def generate_launch_description():
         'z_speed_climbing': (6.0, 'Speed used to climb'),
         'depth_smoothness': (0.5, 'Minimal depth smoothness (std)'), # CARLA's values oscillate on flat surfaces
         'depth_decimation_factor': (10, 'Input depth will be resized according to this value'),
-        'altitude_landed': (1.5, 'Altitude we can activate the flight controller landing command'),
+        'altitude_landed': (5.0, 'Altitude we can activate the flight controller landing command'), # resolution becomes too coarse at low altitudes
         'safe_altitude': (50, 'Altitude where there are no obstacles'),
-        'safety_radius': (1.5, 'Used to project the UAV to the ground'),
-        'safety_threshold': (0.8, 'Used to control the semantic segmentation model'),
+        'safety_radius': (2.0, 'Used to project the UAV to the ground'),
+        'safety_threshold': (0.85, 'Used to control the semantic segmentation model'),
         'dist_func_threshold': (0.6, 'Threshold used to binarise the segmentation to find the centre of the free areas'),
         'giveup_after_sec': (5, 'Amount of time the system will wait until it gives up landing at that spot (only below safe_altitude)'),
         'max_depth_sensing': (20, 'Setting telling how far the depth sensor can reach'),

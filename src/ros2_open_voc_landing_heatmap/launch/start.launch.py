@@ -132,7 +132,7 @@ def generate_launch_description():
          "wMax" : ('50.0','Max velocity z'),
          "saturateVel_separately" : ('True', ''),
          # Max tilt [degrees]
-         'tiltMax': ('3.0', 'Maximum angle the UAV is allowed (bank angle)'),
+         'tiltMax': ('1.0', 'Maximum angle the UAV is allowed (bank angle)'),
          # Max Rate [rad/s]
          "pMax" : ('100.0',''),
          "qMax" : ('100.0',''),
