@@ -206,7 +206,6 @@ class LandingModule(Node):
         self.mov_avg_counter = 0
 
         self.heatmap_filtered = None
-        self.heatmap_dist_function_filtered = None
 
         self.img_msg = None
 
@@ -373,19 +372,9 @@ class LandingModule(Node):
         _,tmp_thresh = cv2.threshold(heatmap_resized,127,255,cv2.THRESH_BINARY)
         heatmap_dist_function = cv2.distanceTransform(tmp_thresh, cv2.DIST_L2, maskSize=3)
         cv2.normalize(heatmap_dist_function, heatmap_dist_function, 0, 1.0, cv2.NORM_MINMAX)
-        
-        self.heatmap_dist_function_filtered = heatmap_dist_function
-
-        heatmap_dist_function_filtered = self.heatmap_dist_function_filtered.copy()
-        radius_mult = 20 if self.landing_status.state == LandingState.AIMING else 10
-        if self.landing_status.state == LandingState.AIMING or self.landing_status.state == LandingState.LANDING or self.landing_status.state == LandingState.WAITING:
-            safety_radius_pixels = int(radius_mult*(heatmap_dist_function_filtered.shape[1]/2)*self.safety_radius/self.proj)
-            mask = np.zeros_like(heatmap_dist_function_filtered)
-            mask = cv2.circle(mask, (int(heatmap_center[1]),int(heatmap_center[0])), safety_radius_pixels, 255, -1)
-            heatmap_dist_function_filtered[mask!=255] = 0.0
-       
+               
         # Check area, perimeter, distance from center
-        _, dist_thrs = cv2.threshold(heatmap_dist_function_filtered, self.dist_func_threshold, 1.0, cv2.THRESH_BINARY)
+        _, dist_thrs = cv2.threshold(heatmap_dist_function, self.dist_func_threshold, 1.0, cv2.THRESH_BINARY)
         contours,_ = cv2.findContours(dist_thrs.astype('uint8'), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         xy_idx = [[1.0,0]] # if nothing is found below, move forward
         objective_values = [0.0]
@@ -394,10 +383,10 @@ class LandingModule(Node):
             perimeter = cv2.arcLength(cnt, True)
             if (area == 0) or (perimeter == 0):
                 continue
-            mask = np.zeros_like(heatmap_dist_function_filtered)
+            mask = np.zeros_like(heatmap_dist_function)
             cv2.drawContours(mask, [cnt], contourIdx=-1, color=(255), thickness=cv2.FILLED)
             # now mask has only the current contour (filled)
-            dist_cnt = heatmap_dist_function_filtered.copy()
+            dist_cnt = heatmap_dist_function.copy()
             # using the previously masked heatmap, we expose only the pixels under the contour
             dist_cnt[mask!=255] = 0.0
             cx, cy = np.unravel_index(dist_cnt.argmax(), dist_cnt.shape)
