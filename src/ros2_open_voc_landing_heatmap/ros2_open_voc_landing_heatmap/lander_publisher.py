@@ -45,16 +45,17 @@ FOV = math.radians(73) #TODO: get this from the camera topic...
 
 negative_prompts = ["building, house, apartment-building, warehouse, shed, garage", 
                     "roof, rooftop, terrace, shelter, dome, canopy, ceiling", 
-                    "tree, bush, tall-plant", 
+                    "tree, bare tree, tree during autumn, bush, tall-plant", 
                     "water, lake, river, swimming pool",
                     "people, crowd", 
                     "vehicle, car, train", 
                     "lamp-post, transmission-line", 
-                    "fence, wall, hedge", 
+                    "fence, wall, hedgerow", 
                     "road, street, avenue, highway, drive, lane",
                     "stairs, steps, footsteps"]
-positive_prompts = ["grass, backyard, frontyard, courtyard, lawn", 
-                    "sports-field, park, open-area, open-space"] 
+positive_prompts = ["grass, dead grass, backyard, frontyard, courtyard, lawn", 
+                    "sports-field, park, open-area, open-space, agricultural land",
+                    "parking lot, sidewalk, gravel, dirt, sand, concrete floor, asphalt"] 
 
 PROMPT_ENGINEERING = "a bird's eye view of a {}, ingame screen shot, bad graphics, shade, shadows"
 
