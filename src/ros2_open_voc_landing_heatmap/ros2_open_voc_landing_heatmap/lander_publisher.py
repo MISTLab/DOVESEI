@@ -593,7 +593,8 @@ class LandingModule(Node):
         self.landing_status.is_collision_free = depth_min > self.safety_radius or landed_trigger
         is_collision_free_dynamic_decision = self.landing_status.is_collision_free
 
-        is_landing = adjusted_err < self.safety_radius and is_collision_free_dynamic_decision and is_flat_dynamic_decision
+        descend_while_aiming = (self.landing_status.altitude + estimated_travelled_distance) >= self.safe_altitude*1.1
+        is_landing = adjusted_err < self.safety_radius and is_collision_free_dynamic_decision and is_flat_dynamic_decision and not descend_while_aiming
         is_aiming = self.landing_status.is_safe and is_clear_dynamic_decision and is_collision_free_dynamic_decision and is_flat_dynamic_decision
 
         # Trying to isolate all the sensing above 
@@ -610,7 +611,7 @@ class LandingModule(Node):
                 self.landing_status.state = LandingState.LANDING
             elif is_aiming and self.landing_status.state != LandingState.LANDING:
                 self.landing_status.state = LandingState.AIMING
-            elif self.landing_status.is_safe:
+            elif self.landing_status.is_safe and descend_while_aiming:
                 self.landing_status.state = LandingState.SEARCHING
             elif self.landing_status.state != LandingState.SEARCHING:
                 self.giveup_landing_timer = curr_time_sec
@@ -658,8 +659,7 @@ class LandingModule(Node):
             y = ys_err
             # It's hard to aim when the UAV is too high, so it should descend because 
             # the AIMING state means there's a good landing spot candidate below anyway
-            # 1/3 of the landing speed...
-            if self.landing_status.altitude + estimated_travelled_distance >= self.safe_altitude*1.1:
+            if descend_while_aiming:
                 self.z_speed = self.aiming_descending_mult*self.z_gain_landing*self.z_speed_landing*self.landing_status.altitude
                 z = -self.z_speed
             else:
