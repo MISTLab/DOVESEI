@@ -84,6 +84,8 @@ class LandingStatus:
     delta_time_sec: float = 0.0
     elapsed_time_sec: float = 0.0
     altitude: float = 0.0
+    curr_threshold: float = 0.0
+    success: bool = False
 
 
 class LandingModule(Node):
@@ -480,6 +482,9 @@ class LandingModule(Node):
         else:
             self.get_logger().warn(f"Bumpy ground")
 
+        self.get_logger().info(f"Segmentation threshold: {self.landing_status.curr_threshold:0.3f}")
+        self.get_logger().info(f"Segmentation success: {self.landing_status.success}")
+
         msg_str += f"-ALT:{self.landing_status.altitude:.3f}"
         self.get_logger().info(f"Altitude: {self.landing_status.altitude:0.3f} m")
         msg_str += f"-CSG:{self.landing_status.conservative_gain:0.3f}"
@@ -500,7 +505,9 @@ class LandingModule(Node):
                 'is_flat': str(self.landing_status.is_flat),
                 'position': self.curr_pos,
                 'conservative_gain': self.landing_status.conservative_gain,
-                'loop_freq': 1/self.landing_status.delta_time_sec
+                'loop_freq': 1/self.landing_status.delta_time_sec,
+                'curr_threshold': self.landing_status.curr_threshold,
+                'success': self.landing_status.success
             }
             self.savedict[int(self.landing_status.elapsed_time_sec*1000)] = tmp_dict
 
@@ -553,6 +560,8 @@ class LandingModule(Node):
             self.req.dynamic_threshold = self.seg_dynamic_threshold
 
             def future_done_callback(future):
+                self.landing_status.curr_threshold = future.result().curr_threshold
+                self.landing_status.success = future.result().success
                 if future.result().success == True:
                     heatmap_msg = future.result().heatmap
                     xy_err = self.get_xy_error_from_semantics(heatmap_msg)

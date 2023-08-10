@@ -94,20 +94,23 @@ class GenerateLandingHeatmap(Node):
 
         
         logits_threshold = logits > safety_threshold
+        curr_threshold = safety_threshold
         response.success = False
         if request.dynamic_threshold > 0.0:
             total_pixels = np.prod(logits.shape)
             threshold_step = safety_threshold/DYNAMIC_THRESHOLD_MAXSTEPS
             for ti in range(0,DYNAMIC_THRESHOLD_MAXSTEPS+1):
                 if (logits_threshold==True).sum()/total_pixels < request.dynamic_threshold:
-                    logits_threshold = logits > (safety_threshold-threshold_step*ti)
+                    curr_threshold = (safety_threshold-threshold_step*ti)
+                    logits_threshold = logits > curr_threshold
                 else:
                     response.success = True
                     break
-            self.get_logger().warn(f'Dynamic threshold: {(safety_threshold-threshold_step*ti):.3f}')
         else:
             response.success = True
         
+        response.curr_threshold = curr_threshold
+
         # returns heatmap as grayscale image
         response.heatmap = self.cv_bridge.cv2_to_imgmsg((logits_threshold*255).astype('uint8'), encoding='mono8')
         response.heatmap.header.frame_id = input_image_msg.header.frame_id

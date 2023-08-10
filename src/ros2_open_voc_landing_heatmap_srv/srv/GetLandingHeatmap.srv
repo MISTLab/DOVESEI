@@ -7,4 +7,5 @@ int8 blur_kernel_size
 float32 dynamic_threshold
 ---
 sensor_msgs/Image heatmap
+float32 curr_threshold
 bool success
