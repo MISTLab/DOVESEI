@@ -121,6 +121,7 @@ class LandingModule(Node):
         self.declare_parameter('blur_kernel_size', 15)
         self.declare_parameter('seg_dynamic_threshold',0.10)
         self.declare_parameter('prompt_engineering', PROMPT_ENGINEERING)
+        self.declare_parameter('aiming_descending_mult', 0.5)
 
         img_topic = self.get_parameter('img_topic').value
         depth_topic = self.get_parameter('depth_topic').value
@@ -153,6 +154,7 @@ class LandingModule(Node):
         self.blur_kernel_size = self.get_parameter('blur_kernel_size').value
         self.prompt_engineering = self.get_parameter('prompt_engineering').value
         self.seg_dynamic_threshold = self.get_parameter('seg_dynamic_threshold').value
+        self.aiming_descending_mult = self.get_parameter('aiming_descending_mult').value
         self.add_on_set_parameters_callback(self.parameters_callback)
 
         if not self.min_conservative_gain > 0:
@@ -657,7 +659,7 @@ class LandingModule(Node):
             # the AIMING state means there's a good landing spot candidate below anyway
             # 1/3 of the landing speed...
             if self.landing_status.altitude + estimated_travelled_distance >= self.safe_altitude*1.1:
-                self.z_speed = 0.3*self.z_gain_landing*self.z_speed_landing*self.landing_status.altitude
+                self.z_speed = self.aiming_descending_mult*self.z_gain_landing*self.z_speed_landing*self.landing_status.altitude
                 z = -self.z_speed
             else:
                 z = 0.0
