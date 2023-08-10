@@ -116,6 +116,7 @@ def generate_launch_description():
         'positive_prompts': (POSITIVE_PROMPTS, 'Positive prompts, separated by ;'),
         'blur_kernel_size': (15, 'Size of the blur kernel'),
         'seg_dynamic_threshold': (0.10, 'Minimum amount of area good for landing as the segmentation will decrease the threshold until it reaches it (0.0 disables it)'),
+        'aiming_descending_mult': (0.5, 'Multiplier (in relation to landing speed) for the AIMING state descending speed'),
         'prompt_engineering': (PROMPT_ENGINEERING, 'Prompt modifier where it will add the prompt (negative or positive) where there is {}'),
    }
    lander_params_lcgf = {k: LaunchConfiguration(k) for k in lander_params.keys()}
