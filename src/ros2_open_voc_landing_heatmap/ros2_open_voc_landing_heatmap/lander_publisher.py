@@ -649,7 +649,8 @@ class LandingModule(Node):
             self.gain = self.input_gain
             x = xs_err
             y = ys_err
-            self.int_x = self.int_y = 0.0 # it should not move in the XY during landing...
+            self.int_x = -x  # integrator is only for the AIMING state
+            self.int_y = -y  # integrator is only for the AIMING state
             z = 0.0
         elif self.landing_status.state == LandingState.AIMING:
             self.gain = self.input_gain*self.aiming_gain_mult
