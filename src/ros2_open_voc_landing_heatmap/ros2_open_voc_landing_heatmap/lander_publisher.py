@@ -77,16 +77,16 @@ class LandingState(Enum):
 @dataclass
 class LandingStatus:
     state: LandingState = LandingState.SEARCHING
-    is_safe: bool = False             # UAV can move in the XY directions safely
-    is_clear: bool = False            # UAV can descend safely, segmentation shows no obstacles
-    is_collision_free: bool = False   # UAV can descend safely, depth shows no obstacles
-    is_flat: bool = False             # UAV can land safely, ground is flat (enough)
+    is_safe_altitude: bool = False    # UAV can move in the XY directions safely
+    is_xy_err_below_thr: bool = False            # UAV can descend safely, segmentation shows no obstacles
+    is_depth_collision_free: bool = False   # UAV can descend safely, depth shows no obstacles
+    is_depth_flat: bool = False             # UAV can land safely, ground is flat (enough)
     conservative_gain: float = 1.0
     delta_time_sec: float = 0.0
     elapsed_time_sec: float = 0.0
     altitude: float = 0.0
     curr_threshold: float = 0.0
-    success: bool = False
+    heatmap_received: bool = False
 
 
 class LandingModule(Node):
@@ -487,29 +487,29 @@ class LandingModule(Node):
         state_msg = String() # easy to break apart without the need for a custom message...
         msg_str = str(self.landing_status.state).split('.')[1]
         self.get_logger().info(f'Current state: {msg_str}')
-        if self.landing_status.is_safe:
+        if self.landing_status.is_safe_altitude:
             self.get_logger().info("Safe altitude")
             msg_str += "-safe"
         else:
             self.get_logger().warn(f"Safe altitude breached, no movements allowed on XY!")
-        if self.landing_status.is_clear:
+        if self.landing_status.is_xy_err_below_thr:
             self.get_logger().info("Segmentation clear")
             msg_str += "-seg_clear"
         else:
             self.get_logger().warn(f"Segmentation detected obstacle")
-        if self.landing_status.is_collision_free:
+        if self.landing_status.is_depth_collision_free:
             self.get_logger().info("Depth collision free")
             msg_str += "-depth_clear"
         else:
             self.get_logger().warn(f"Depth collision detected")
-        if self.landing_status.is_flat:
+        if self.landing_status.is_depth_flat:
             self.get_logger().info("Flat ground")
             msg_str += "-flat"
         else:
             self.get_logger().warn(f"Bumpy ground")
 
         self.get_logger().info(f"Segmentation threshold: {self.landing_status.curr_threshold:0.3f}")
-        self.get_logger().info(f"Segmentation success: {self.landing_status.success}")
+        self.get_logger().info(f"Segmentation heatmap_received: {self.landing_status.heatmap_received}")
 
         msg_str += f"-ALT:{self.landing_status.altitude:.3f}"
         self.get_logger().info(f"Altitude: {self.landing_status.altitude:0.3f} m")
@@ -525,15 +525,15 @@ class LandingModule(Node):
         if self.savefile:
             tmp_dict = {
                 'state': str(self.landing_status.state).split('.')[1],
-                'is_safe': str(self.landing_status.is_safe),
-                'is_clear': str(self.landing_status.is_clear),
-                'is_collision_free': str(self.landing_status.is_collision_free),
-                'is_flat': str(self.landing_status.is_flat),
+                'is_safe_altitude': str(self.landing_status.is_safe_altitude),
+                'is_xy_err_below_thr': str(self.landing_status.is_xy_err_below_thr),
+                'is_depth_collision_free': str(self.landing_status.is_depth_collision_free),
+                'is_depth_flat': str(self.landing_status.is_depth_flat),
                 'position': self.curr_pos,
                 'conservative_gain': self.landing_status.conservative_gain,
                 'loop_freq': 1/self.landing_status.delta_time_sec,
                 'curr_threshold': self.landing_status.curr_threshold,
-                'success': self.landing_status.success
+                'heatmap_received': self.landing_status.heatmap_received
             }
             self.savedict[int(self.landing_status.elapsed_time_sec*1000)] = tmp_dict
 
@@ -553,9 +553,9 @@ class LandingModule(Node):
                 return
             
             if self.landing_status.altitude >= self.safe_altitude:
-                self.landing_status.is_safe = True
+                self.landing_status.is_safe_altitude = True
             else:
-                self.landing_status.is_safe = False
+                self.landing_status.is_safe_altitude = False
 
             negative_prompts = self.negative_prompts
             positive_prompts = self.positive_prompts
@@ -564,9 +564,9 @@ class LandingModule(Node):
 
             # The conservative_gain is a very simple (hacky?) way to force the system to relax its decisions as time passes 
             # because at the end of the day it will be limited by its battery and the worst scenario is to fall from the sky
-            # - flatness (is_flat_dynamic_decision)
-            # - minimum distance to obstacles (is_collision_free_dynamic_decision)
-            # - maximum acceptable heatmap location error before switching to landing (is_clear_dynamic_decision)
+            # - flatness (is_depth_flat_dynamic_decision)
+            # - minimum distance to obstacles (is_depth_collision_free_dynamic_decision)
+            # - maximum acceptable heatmap location error before switching to landing (is_xy_err_below_thr_dynamic_decision)
             conservative_gain = 1-np.exp(1-self.max_landing_time_sec/self.landing_status.elapsed_time_sec)
             self.landing_status.conservative_gain = conservative_gain if conservative_gain > self.min_conservative_gain else self.min_conservative_gain
         
@@ -587,7 +587,7 @@ class LandingModule(Node):
 
             def future_done_callback(future):
                 self.landing_status.curr_threshold = future.result().curr_threshold
-                self.landing_status.success = future.result().success
+                self.landing_status.heatmap_received = future.result().success
                 if future.result().success == True:
                     heatmap_msg = future.result().heatmap
                     xy_err = self.get_xy_error_from_semantics(heatmap_msg)
@@ -618,19 +618,19 @@ class LandingModule(Node):
         # Very rudimentary filter
         adjusted_err = math.sqrt(xs_err**2+ys_err**2)
         dynamic_threshold = 2*self.safety_radius/self.landing_status.conservative_gain # the segmentation is always noisy, thus the 2x
-        self.landing_status.is_clear = adjusted_err < self.safety_radius
-        is_clear_dynamic_decision = adjusted_err < dynamic_threshold
+        self.landing_status.is_xy_err_below_thr = adjusted_err < self.safety_radius
+        is_xy_err_below_thr_dynamic_decision = adjusted_err < dynamic_threshold
         self.get_logger().info(f"Segmentation X,Y ERR, adjusted dist, dynamic threshold: {xs_err:.2f},{-ys_err:.2f},{adjusted_err:.2f},{dynamic_threshold:.2f}")
         # TODO: improve the flat surface definition
-        self.landing_status.is_flat = depth_std < self.depth_smoothness
-        is_flat_dynamic_decision = depth_std < self.depth_smoothness/self.landing_status.conservative_gain
-        # TODO: improve the is_collision_free definition
-        self.landing_status.is_collision_free = depth_min > self.safety_radius or landed_trigger
-        is_collision_free_dynamic_decision = self.landing_status.is_collision_free
+        self.landing_status.is_depth_flat = depth_std < self.depth_smoothness
+        is_depth_flat_dynamic_decision = depth_std < self.depth_smoothness/self.landing_status.conservative_gain
+        # TODO: improve the is_depth_collision_free definition
+        self.landing_status.is_depth_collision_free = depth_min > self.safety_radius or landed_trigger
+        is_depth_collision_free_dynamic_decision = self.landing_status.is_depth_collision_free
 
         descend_while_aiming = (self.landing_status.altitude + estimated_travelled_distance) >= self.safe_altitude*1.1
-        is_landing = adjusted_err < self.safety_radius and is_collision_free_dynamic_decision and is_flat_dynamic_decision and not descend_while_aiming
-        is_aiming = self.landing_status.is_safe and is_clear_dynamic_decision and is_collision_free_dynamic_decision and is_flat_dynamic_decision
+        is_landing = adjusted_err < self.safety_radius and is_depth_collision_free_dynamic_decision and is_depth_flat_dynamic_decision and not descend_while_aiming
+        is_aiming = self.landing_status.is_safe_altitude and is_xy_err_below_thr_dynamic_decision and is_depth_collision_free_dynamic_decision and is_depth_flat_dynamic_decision
 
         # Trying to isolate all the sensing above 
         # and the state switching decisions below.
@@ -646,7 +646,7 @@ class LandingModule(Node):
                 self.landing_status.state = LandingState.LANDING
             elif is_aiming and self.landing_status.state != LandingState.LANDING:
                 self.landing_status.state = LandingState.AIMING
-            elif self.landing_status.is_safe and descend_while_aiming:
+            elif self.landing_status.is_safe_altitude and descend_while_aiming:
                 self.landing_status.state = LandingState.SEARCHING
             elif self.landing_status.state != LandingState.SEARCHING:
                 self.giveup_landing_timer = curr_time_sec
@@ -655,7 +655,7 @@ class LandingModule(Node):
             time_since_giveup_landing = (curr_time_sec - self.giveup_landing_timer)
             self.get_logger().warn(f"Time since giveup_landing_timer enabled: {time_since_giveup_landing}")        
             if (time_since_giveup_landing > self.giveup_after_sec):
-                if self.landing_status.is_safe:
+                if self.landing_status.is_safe_altitude:
                     self.landing_status.state = LandingState.RESTARTING
                     if self.search4new_place_timer == 0:
                         if self.use_random_search4new_place:
