@@ -16,7 +16,6 @@ import cv2
 
 
 from ros2_open_voc_landing_heatmap_srv.srv import GetLandingHeatmap
-from std_msgs.msg import String
 from sensor_msgs.msg import Image as ImageMsg
 from geometry_msgs.msg import Twist
 
@@ -237,7 +236,7 @@ class LandingModule(Node):
         self.twist_pub = self.create_publisher(Twist, twist_topic,1)
         self.heatmap_pub = self.create_publisher(ImageMsg, heatmap_topic,1)
         self.depth_proj_pub = self.create_publisher(ImageMsg, depth_proj_topic,1)
-        self.state_pub = self.create_publisher(String, 'lander_state', 1)
+        self.state_pub = self.create_publisher(ImageMsg, 'lander_state', 1)
 
         self.tf_trials = 5
         self.tf_buffer = Buffer()
@@ -486,7 +485,7 @@ class LandingModule(Node):
 
 
     def publish_status(self):
-        state_msg = String() # easy to break apart without the need for a custom message...
+        state_msg = ImageMsg() # easy to break apart without the need for a custom message...
         msg_str = str(self.landing_status.state).split('.')[1]
         self.get_logger().info(f'Current state: {msg_str}')
         if self.landing_status.is_safe_altitude:
@@ -521,7 +520,8 @@ class LandingModule(Node):
         self.get_logger().info(f"Loop Freq.: {1/self.landing_status.delta_time_sec:0.3f} Hz")
         msg_str += f"-ETS:{self.landing_status.elapsed_time_sec:0.3f}"
         self.get_logger().info(f"Elapsed Time: {self.landing_status.elapsed_time_sec:0.3f} s")
-        state_msg.data = msg_str
+        state_msg.header.frame_id = msg_str
+        state_msg.header.stamp = self.get_clock().now().to_msg()
         self.state_pub.publish(state_msg)
 
         if self.savefile:
