@@ -77,13 +77,14 @@ And
 source install/setup.bash
 ```
 
-We setup two launch files that allow to test the system using CARLA (see the instructions [here](https://github.com/ricardodeazambuja/ros2_quad_sim_python) for more details) or using [Aerial View simulator](https://github.com/ricardodeazambuja/ros2_satellite_aerial_view_simulator).
+We created two launch files that allow to test the system:
+### 1. Using our adaptation of the CARLA Simulator for use with UAVs (see the instructions [here](https://github.com/ricardodeazambuja/ros2_quad_sim_python) for more details):
 
 ```
 ros2 launch ros2_open_voc_landing_heatmap start.launch.py
 ```
 
-And
+### 2. Using our [Aerial View Simulator](https://github.com/ricardodeazambuja/ros2_satellite_aerial_view_simulator) that uses real-world satellite images:
 ```
 ros2 launch ros2_open_voc_landing_heatmap start_aerialview.launch.py
 ```
