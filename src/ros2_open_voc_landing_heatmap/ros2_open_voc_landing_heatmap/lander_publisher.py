@@ -458,7 +458,7 @@ class LandingModule(Node):
     
 
     def publish_twist(self, x, y, z):
-        twist = Twist()
+        twist_msg = Twist()
         # The UAV's maximum bank angle is limited to a very small value
         # and this is why such a simple control works.
         # Additionally, the assumption is that the maximum speed is very low
@@ -470,17 +470,17 @@ class LandingModule(Node):
         self.int_x = self.int_x if abs(self.int_x) <= self.int_x_sat else np.sign(self.int_x)*self.int_x_sat
         self.int_y = self.int_y if abs(self.int_y) <= self.int_y_sat else np.sign(self.int_y)*self.int_y_sat
 
-        twist.linear.x = float(x * self.gain + self.int_x*self.gain)  # the max bank angle is limited (tiltMax), therefore the gain is here to saturate
-        twist.linear.y = -float(y * self.gain + self.int_y*self.gain)
-        twist.linear.z = float(z)
+        twist_msg.linear.x = float(x * self.gain + self.int_x*self.gain)  # the max bank angle is limited (tiltMax), therefore the gain is here to saturate
+        twist_msg.linear.y = -float(y * self.gain + self.int_y*self.gain)
+        twist_msg.linear.z = float(z)
         
-        twist.angular.x = 0.0
-        twist.angular.y = 0.0
-        twist.angular.z = 0.0
+        twist_msg.angular.x = 0.0
+        twist_msg.angular.y = 0.0
+        twist_msg.angular.z = 0.0
 
         if not self.debug:
-            self.get_logger().info(f'Publishing velocities ({(twist.linear.x, twist.linear.y, twist.linear.z)})')
-            self.twist_pub.publish(twist)
+            self.get_logger().info(f'Publishing velocities ({(twist_msg.linear.x, twist_msg.linear.y, twist_msg.linear.z)})')
+            self.twist_pub.publish(twist_msg)
         else:
             self.get_logger().error("Debug mode active: no velocities published!")
 
