@@ -75,15 +75,6 @@ def generate_launch_description():
       'savefile',
       default_value='test_experiment'
    )
- 
-   
-   generate_landing_heatmap = Node(
-         package='ros2_open_voc_landing_heatmap',
-         executable='getlandingheatmap_service',
-         name='generate_landing_heatmap',
-         # emulate_tty=True,
-         on_exit=Shutdown(),
-      )
    
    lander_params = {
         'img_topic': ('/carla/flying_sensor/rgb_down/image', 'Image topic with a RGB camera pointing downwards'),
@@ -129,6 +120,16 @@ def generate_launch_description():
          on_exit=[LogInfo(msg=PythonExpression(["str('>'*15 + ","' savefile='+'",savefile,".json' if len('", savefile, "') else '')"])), Shutdown()],
          arguments=[PythonExpression(["'debug' if ", debug, " else ''"]), PythonExpression(["'savefile='+'",savefile,"' if len('", savefile, "') else ''"])],
          parameters=[{i[0]:i[1][0]} for i in lander_params.items()]
+      )
+
+   
+   generate_landing_heatmap = Node(
+         package='ros2_open_voc_landing_heatmap',
+         executable='getlandingheatmap_service',
+         name='generate_landing_heatmap',
+         # emulate_tty=True,
+         on_exit=Shutdown(),
+         parameters=[{'img_topic':lander_params['img_topic'][0]}]
       )
 
    aerialimages = Node(

@@ -151,14 +151,6 @@ def generate_launch_description():
       launch_arguments=quad_params_lcgf.items(),
       )
    
-   generate_landing_heatmap = Node(
-         package='ros2_open_voc_landing_heatmap',
-         executable=PythonExpression(["'getlandingheatmap_service' if not ", use_gt_semantics, " else 'getlandingheatmap_gt_service'"]),
-         name='generate_landing_heatmap',
-         # emulate_tty=True,
-         on_exit=Shutdown(),
-      )
-   
    lander_params = {
         'img_topic': ('/carla/flying_sensor/rgb_down/image', 'Image topic with a RGB camera pointing downwards'),
         'depth_topic': ('/carla/flying_sensor/depth_down/image', 'Image topic with a downwards depth image'),
@@ -205,6 +197,14 @@ def generate_launch_description():
          parameters=[{i[0]:i[1][0]} for i in lander_params.items()]
       )
 
+   generate_landing_heatmap = Node(
+         package='ros2_open_voc_landing_heatmap',
+         executable=PythonExpression(["'getlandingheatmap_service' if not ", use_gt_semantics, " else 'getlandingheatmap_gt_service'"]),
+         name='generate_landing_heatmap',
+         # emulate_tty=True,
+         on_exit=Shutdown(),
+         parameters=[{'img_topic':lander_params['img_topic'][0]}]
+      )
 
    return LaunchDescription([
       SetEnvironmentVariable(name='RCUTILS_COLORIZED_OUTPUT', value='1'),

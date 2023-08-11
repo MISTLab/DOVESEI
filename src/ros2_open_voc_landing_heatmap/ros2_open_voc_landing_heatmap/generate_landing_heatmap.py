@@ -27,12 +27,15 @@ class GenerateLandingHeatmap(Node):
 
     def __init__(self):
         super().__init__('generate_landing_heatmap')
+        self.declare_parameter('img_topic', '/carla/flying_sensor/rgb_down/image')
+        img_topic = self.get_parameter('img_topic').value
+
         self.cv_bridge = CvBridge()
 
         self.get_logger().warn('Waiting for the simulator...')
         self.check_flying_sensor_alive = self.create_subscription(
             ImageMsg,
-            '/carla/flying_sensor/rgb_down/image',
+            img_topic,
             self.start_node,
             1)
 
