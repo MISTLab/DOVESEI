@@ -334,6 +334,7 @@ class LandingModule(Node):
         
         img_msg = self.cv_bridge.cv2_to_imgmsg((255*depth_proj_resized/max_dist).astype('uint8'), encoding='mono8')
         img_msg.header.frame_id = depthmsg.header.frame_id
+        img_msg.header.stamp = self.get_clock().now().to_msg()
         self.depth_proj_pub.publish(img_msg)
         return depth_std, depth_min
 
@@ -440,6 +441,7 @@ class LandingModule(Node):
         img_msg = self.cv_bridge.cv2_to_imgmsg(img, encoding="bgr8")
 
         img_msg.header.frame_id = heatmap_msg.header.frame_id
+        img_msg.header.stamp = self.get_clock().now().to_msg()
         self.heatmap_pub.publish(img_msg)
         return xy_idx
 
