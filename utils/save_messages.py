@@ -47,7 +47,7 @@ class ImageSaving(Node):
 
     def save_messages(self, statemsg, rgbmsg, depthmsg, heatmapmsg, rawheatmapmsg):
         elapsed_time_msec = int(float(statemsg.header.frame_id.split('-')[-1].split(':')[1])*1000)
-        rgb = self.cv_bridge.imgmsg_to_cv2(rgbmsg, desired_encoding='passthrough')
+        rgb = self.cv_bridge.imgmsg_to_cv2(rgbmsg, desired_encoding='bgr8')
         depth = self.cv_bridge.imgmsg_to_cv2(depthmsg, desired_encoding='passthrough')
         heatmap = self.cv_bridge.imgmsg_to_cv2(heatmapmsg, desired_encoding='passthrough')
         rawheatmap = self.cv_bridge.imgmsg_to_cv2(rawheatmapmsg, desired_encoding='passthrough')
