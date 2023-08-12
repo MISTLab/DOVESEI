@@ -53,9 +53,10 @@ class ImageSaving(Node):
         rawheatmap = self.cv_bridge.imgmsg_to_cv2(rawheatmapmsg, desired_encoding='passthrough')
 
         cv2.imwrite(self.folder+"/rgb_"+str(elapsed_time_msec)+".png", rgb)
-        cv2.imwrite(self.folder+"saved_imgs/depth_"+str(elapsed_time_msec)+".png", depth)
-        cv2.imwrite(self.folder+"saved_imgs/heatmap_"+str(elapsed_time_msec)+".png", heatmap)
-        cv2.imwrite(self.folder+"saved_imgs/rawheatmap_"+str(elapsed_time_msec)+".png", rawheatmap)
+        cv2.imwrite(self.folder+"/depth_"+str(elapsed_time_msec)+".png", depth)
+        cv2.imwrite(self.folder+"/heatmap_"+str(elapsed_time_msec)+".png", heatmap)
+        cv2.imwrite(self.folder+"/rawheatmap_"+str(elapsed_time_msec)+".png", rawheatmap)
+
         self.get_logger().warn(f"Image batch {elapsed_time_msec} saved!")
 
     def on_shutdown_cb(self):
