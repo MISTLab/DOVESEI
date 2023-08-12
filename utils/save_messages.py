@@ -12,7 +12,7 @@ from cv_bridge import CvBridge
 
 class ImageSaving(Node):
 
-    def __init__(self, folder="saved_imgs"):
+    def __init__(self, folder):
         super().__init__('image_saving_module')
         self.folder = folder
         self.declare_parameter('img_topic', '/carla/flying_sensor/rgb_down/image')
@@ -27,7 +27,7 @@ class ImageSaving(Node):
         self.cv_bridge = CvBridge()
 
         queue_size = 1
-        delay_btw_msgs = .1
+        delay_btw_msgs = 2
         tss = ApproximateTimeSynchronizer(
             [
                 Subscriber(self, ImageMsg, "/lander_state"),
@@ -57,19 +57,21 @@ class ImageSaving(Node):
         cv2.imwrite(self.folder+"/heatmap_"+str(elapsed_time_msec)+".png", heatmap)
         cv2.imwrite(self.folder+"/rawheatmap_"+str(elapsed_time_msec)+".png", rawheatmap)
 
+        self.get_logger().warn(f"{statemsg.header.frame_id}")
         self.get_logger().warn(f"Image batch {elapsed_time_msec} saved!")
 
     def on_shutdown_cb(self):
         self.get_logger().warn(f'Shutting down...')
 
 def main():
-    rclpy.init()
+    folder="saved_imgs"
     if len(sys.argv)>1:
         for arg in sys.argv[1:]:
             if "folder" in arg:
                 folder = arg.split("=")[-1]
-                image_saving_module = ImageSaving(folder)
-    image_saving_module = ImageSaving()
+    print(f"Saving images to: {folder}")
+    rclpy.init()
+    image_saving_module = ImageSaving(folder)
     try:
         rclpy.spin(image_saving_module)
     except KeyboardInterrupt:
