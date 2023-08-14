@@ -92,7 +92,7 @@ Use `--show-args` to see explanations about the available parameters.
 
 ## Results from Initial Pilot Experiments
 ### Using Satellite Images [(Aerial View Simulator)](https://github.com/ricardodeazambuja/ros2_satellite_aerial_view_simulator):
-In the samples below, the system was started at randomly chosen places in France (because they have high resolution free tiles), at an altitude of 100m, and it only had access to the RGB image and the current altitude while the depth was saturated. The parameters were the default ones from [this launch file](https://github.com/ricardodeazambuja/ros2_open_voc_landing_heatmap/blob/e2d333c98daec0e9a223d1f67c035b4e51bcf0c1/src/ros2_open_voc_landing_heatmap/launch/start_aerialview.launch.py). The videos were generated using ffmpeg with a fixed time between frames.
+In the samples below, the system was started at randomly chosen places in France (because they have high resolution free tiles), at an altitude of 100m, and it only had access to the RGB image and the current altitude while the depth was saturated. The parameters were the default ones from [this launch file](https://github.com/ricardodeazambuja/ros2_open_voc_landing_heatmap/blob/e2d333c98daec0e9a223d1f67c035b4e51bcf0c1/src/ros2_open_voc_landing_heatmap/launch/start_aerialview.launch.py). The videos were generated using [ffmpeg](https://www.ffmpeg.org/) with a fixed time between frames.
 
 https://github.com/ricardodeazambuja/ros2_open_voc_landing_heatmap/assets/6606382/076843bc-4f04-4093-930e-68b53bd352ab
 
