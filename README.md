@@ -112,7 +112,7 @@ In the samples below, the system was started at randomly chosen places in France
 ## Known Problems and Future Improvements
 Risking repeating the introduction, the primary motivation behind this work is to explore an alternative approach. Rather than relying on conventional solutions rooted in SLAM and path planning, this study aims to investigate the feasibility of transferring the majority of the system's intelligence to an open-vocabulary semantic segmentation model. Such systems achieve high scores in zero-shot tasks and, therefore, offer improved generalisation capabilities over models that use a closed vocabulary (e.g. a model trained on MS COCO classes). Moreover, an open vocabulary model allows to be "fine tuned" just by means of prompt engineering.
 
-However, previous works have shown that "with great generalisation power comes lower accuracy", and this is a trade-off that this work hopes to investigate deeper in the future. Finally, the field of prompt engineering is quite new and any development could bring improvements to this work probably without the need of training a an expensive new model.
+However, previous works have shown that "with great generalisation power comes lower accuracy", and this is a trade-off that this work hopes to investigate deeper in the future. Finally, the field of prompt engineering is quite new and any development could bring improvements to this work probably without the need of training an expensive new model.
 
 # TODO
 * Improve code structure
