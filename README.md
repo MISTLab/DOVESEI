@@ -90,7 +90,7 @@ ros2 launch ros2_open_voc_landing_heatmap start_aerialview.launch.py
 ```
 Use `--show-args` to see explanations about the available parameters.
 
-## Results Using CARLA and Real-world Satellite Images
+## Initial Results
 ...
 
 ## Known Problems and Future Improvements
