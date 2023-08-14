@@ -94,19 +94,20 @@ Use `--show-args` to see explanations about the available parameters.
 ### Using Satellite Images [(Aerial View Simulator)](https://github.com/ricardodeazambuja/ros2_satellite_aerial_view_simulator):
 In the samples below, the system was started at randomly chosen places in France (because they have high resolution free tiles), at an altitude of 100m, and it only had access to the RGB image and the current altitude while the depth was saturated. The parameters were the default ones from [this launch file](https://github.com/ricardodeazambuja/ros2_open_voc_landing_heatmap/blob/e2d333c98daec0e9a223d1f67c035b4e51bcf0c1/src/ros2_open_voc_landing_heatmap/launch/start_aerialview.launch.py). The videos were generated using [ffmpeg](https://www.ffmpeg.org/) with a fixed time between frames.
 
-https://github.com/ricardodeazambuja/ros2_open_voc_landing_heatmap/assets/6606382/076843bc-4f04-4093-930e-68b53bd352ab
 
-https://github.com/ricardodeazambuja/ros2_open_voc_landing_heatmap/assets/6606382/595c466a-b7da-4b6a-859a-db9d4e5c2ecb
+<video src="assets/videos/output_rgb_001.mp4" controls="controls" style="max-width: 730px;"></video>
 
-https://github.com/ricardodeazambuja/ros2_open_voc_landing_heatmap/assets/6606382/a9761cef-c6da-4a65-adb3-330185341703
+<video src="assets/videos/output_rgb_002.mp4" controls="controls" style="max-width: 730px;"></video>
 
-https://github.com/ricardodeazambuja/ros2_open_voc_landing_heatmap/assets/6606382/025c41d1-6743-4471-975a-391802c82567
+<video src="assets/videos/output_rgb_003.mp4" controls="controls" style="max-width: 730px;"></video>
 
-https://github.com/ricardodeazambuja/ros2_open_voc_landing_heatmap/assets/6606382/2d732579-e0e1-4a9d-ac00-07e5808f2b68
+<video src="assets/videos/output_rgb_004.mp4" controls="controls" style="max-width: 730px;"></video>
 
-https://github.com/ricardodeazambuja/ros2_open_voc_landing_heatmap/assets/6606382/0061d1d8-7444-44e4-b004-93d855b755dc
+<video src="assets/videos/output_rgb_005.mp4" controls="controls" style="max-width: 730px;"></video>
 
-https://github.com/ricardodeazambuja/ros2_open_voc_landing_heatmap/assets/6606382/8fe4e219-9684-4b39-8d07-8b3871bae813
+<video src="assets/videos/output_rgb_006.mp4" controls="controls" style="max-width: 730px;"></video>
+
+<video src="assets/videos/output_rgb_007.mp4" controls="controls" style="max-width: 730px;"></video>
 
 
 ## Known Problems and Future Improvements
