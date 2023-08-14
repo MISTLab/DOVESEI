@@ -12,8 +12,9 @@ from cv_bridge import CvBridge
 
 class ImageSaving(Node):
 
-    def __init__(self, folder):
+    def __init__(self, depth_flag, folder):
         super().__init__('image_saving_module')
+        self.depth_flag = depth_flag
         self.folder = folder
         self.declare_parameter('img_topic', '/carla/flying_sensor/rgb_down/image')
         self.declare_parameter('depth_topic', '/carla/flying_sensor/depth_down/image')
@@ -49,29 +50,33 @@ class ImageSaving(Node):
         elapsed_time_msec = int(float(statemsg.header.frame_id.split('-')[-1].split(':')[1])*1000)
         rgb = self.cv_bridge.imgmsg_to_cv2(rgbmsg, desired_encoding='bgr8')
         depth = self.cv_bridge.imgmsg_to_cv2(depthmsg, desired_encoding='passthrough')
-        heatmap = self.cv_bridge.imgmsg_to_cv2(heatmapmsg, desired_encoding='passthrough')
+        heatmap = self.cv_bridge.imgmsg_to_cv2(heatmapmsg, desired_encoding='bgr8')
         rawheatmap = self.cv_bridge.imgmsg_to_cv2(rawheatmapmsg, desired_encoding='passthrough')
 
-        cv2.imwrite(self.folder+"/rgb_"+str(elapsed_time_msec)+".png", rgb)
-        cv2.imwrite(self.folder+"/depth_"+str(elapsed_time_msec)+".png", depth)
-        cv2.imwrite(self.folder+"/heatmap_"+str(elapsed_time_msec)+".png", heatmap)
-        cv2.imwrite(self.folder+"/rawheatmap_"+str(elapsed_time_msec)+".png", rawheatmap)
+        cv2.imwrite(f"{self.folder}/rgb_{elapsed_time_msec:07d}.png", rgb)
+        if self.depth_flag:
+            cv2.imwrite(f"{self.folder}/depth_{elapsed_time_msec:07d}.png", depth)
+        cv2.imwrite(f"{self.folder}/heatmap_{elapsed_time_msec:07d}.png", heatmap)
+        cv2.imwrite(f"{self.folder}/rawheatmap_{elapsed_time_msec:07d}.png", rawheatmap)
 
         self.get_logger().warn(f"{statemsg.header.frame_id}")
-        self.get_logger().warn(f"Image batch {elapsed_time_msec} saved!")
+        self.get_logger().warn(f"Image batch {elapsed_time_msec:07d} saved!")
 
     def on_shutdown_cb(self):
         self.get_logger().warn(f'Shutting down...')
 
 def main():
+    depth = False
     folder="saved_imgs"
     if len(sys.argv)>1:
+        if "depth" in sys.argv[1:]:
+            depth = True
         for arg in sys.argv[1:]:
             if "folder" in arg:
                 folder = arg.split("=")[-1]
     print(f"Saving images to: {folder}")
     rclpy.init()
-    image_saving_module = ImageSaving(folder)
+    image_saving_module = ImageSaving(depth, folder)
     try:
         rclpy.spin(image_saving_module)
     except KeyboardInterrupt:
