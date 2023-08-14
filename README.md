@@ -90,11 +90,27 @@ ros2 launch ros2_open_voc_landing_heatmap start_aerialview.launch.py
 ```
 Use `--show-args` to see explanations about the available parameters.
 
-## Initial Results
-...
+## Results from Initial Pilot Experiments
+### Using Satellite Images [(Aerial View Simulator)](https://github.com/ricardodeazambuja/ros2_satellite_aerial_view_simulator):
+In the samples below, the system was started at randomly chosen places in France (because they have high resolution free tiles), at an altitude of 100m, and it only had access to the RGB image and the current altitude while the depth was saturated. The parameters were the default ones from [this launch file](https://github.com/ricardodeazambuja/ros2_open_voc_landing_heatmap/blob/e2d333c98daec0e9a223d1f67c035b4e51bcf0c1/src/ros2_open_voc_landing_heatmap/launch/start_aerialview.launch.py). The videos were generated using ffmpeg with a fixed time between frames.
+
+https://github.com/ricardodeazambuja/ros2_open_voc_landing_heatmap/assets/6606382/076843bc-4f04-4093-930e-68b53bd352ab
+
+https://github.com/ricardodeazambuja/ros2_open_voc_landing_heatmap/assets/6606382/595c466a-b7da-4b6a-859a-db9d4e5c2ecb
+
+https://github.com/ricardodeazambuja/ros2_open_voc_landing_heatmap/assets/6606382/a9761cef-c6da-4a65-adb3-330185341703
+
+https://github.com/ricardodeazambuja/ros2_open_voc_landing_heatmap/assets/6606382/025c41d1-6743-4471-975a-391802c82567
+
+https://github.com/ricardodeazambuja/ros2_open_voc_landing_heatmap/assets/6606382/2d732579-e0e1-4a9d-ac00-07e5808f2b68
+
+https://github.com/ricardodeazambuja/ros2_open_voc_landing_heatmap/assets/6606382/0061d1d8-7444-44e4-b004-93d855b755dc
+
+https://github.com/ricardodeazambuja/ros2_open_voc_landing_heatmap/assets/6606382/8fe4e219-9684-4b39-8d07-8b3871bae813
+
 
 ## Known Problems and Future Improvements
-Risking repeating the introduction, the primary motivation behind this work is to explore an alternative approach. Rather than relying on conventional solutions rooted in SLAM and path planning, this study aims to investigate the feasibility of transferring the majority of system intelligence to an open-vocabulary semantic segmentation model. Such systems achieve high scores in zero-shot tasks and, therefore, offer improved generalisation capabilities over models that use a closed vocabulary (e.g. a model trained on MS COCO classes). Moreover, an open vocabulary model allows to be "fine tuned" just by means of prompt engineering.
+Risking repeating the introduction, the primary motivation behind this work is to explore an alternative approach. Rather than relying on conventional solutions rooted in SLAM and path planning, this study aims to investigate the feasibility of transferring the majority of the system's intelligence to an open-vocabulary semantic segmentation model. Such systems achieve high scores in zero-shot tasks and, therefore, offer improved generalisation capabilities over models that use a closed vocabulary (e.g. a model trained on MS COCO classes). Moreover, an open vocabulary model allows to be "fine tuned" just by means of prompt engineering.
 
 However, previous works have shown that "with great generalisation power comes lower accuracy", and this is a trade-off that this work hopes to investigate deeper in the future. Finally, the field of prompt engineering is quite new and any development could bring improvements to this work probably without the need of training a an expensive new model.
 
