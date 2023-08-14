@@ -92,22 +92,21 @@ Use `--show-args` to see explanations about the available parameters.
 
 ## Results from Initial Pilot Experiments
 ### Using Satellite Images [(Aerial View Simulator)](https://github.com/ricardodeazambuja/ros2_satellite_aerial_view_simulator):
-In the samples below, the system was started at randomly chosen places in France (because they have high resolution free tiles), at an altitude of 100m, and it only had access to the RGB image and the current altitude while the depth was saturated. The parameters were the default ones from [this launch file](https://github.com/ricardodeazambuja/ros2_open_voc_landing_heatmap/blob/e2d333c98daec0e9a223d1f67c035b4e51bcf0c1/src/ros2_open_voc_landing_heatmap/launch/start_aerialview.launch.py). The videos were generated using [ffmpeg](https://www.ffmpeg.org/) with a fixed time between frames.
+In the samples below, the system was started at randomly chosen places in France (because they have high resolution free tiles), at an altitude of 100m, and it only had access to the RGB image and the current altitude while the depth was saturated. The parameters were the default ones from [this launch file](https://github.com/ricardodeazambuja/ros2_open_voc_landing_heatmap/blob/e2d333c98daec0e9a223d1f67c035b4e51bcf0c1/src/ros2_open_voc_landing_heatmap/launch/start_aerialview.launch.py). The original videos generated using [ffmpeg](https://www.ffmpeg.org/) including all images, but with a fixed time between frames, are [here](assets/videos/) (for some reason GitHub is failing to show the videos using the html5 `<video>` tag, hence the gifs below...).
 
+![output_rgb_001](https://github.com/ricardodeazambuja/ros2_open_voc_landing_heatmap/assets/6606382/b2cb92ff-e6fa-4db4-abca-1a39167f5647)
 
-<video src="assets/videos/output_rgb_001.mp4" controls="controls" style="max-width: 730px;"></video>
+![output_rgb_002](https://github.com/ricardodeazambuja/ros2_open_voc_landing_heatmap/assets/6606382/679d2f9b-bd7e-43d6-a80d-2a86df0dfcdb)
 
-<video src="assets/videos/output_rgb_002.mp4" controls="controls" style="max-width: 730px;"></video>
+![output_rgb_003](https://github.com/ricardodeazambuja/ros2_open_voc_landing_heatmap/assets/6606382/0afd0034-f9bb-424a-af85-1a39770c17cc)
 
-<video src="assets/videos/output_rgb_003.mp4" controls="controls" style="max-width: 730px;"></video>
+![output_rgb_004](https://github.com/ricardodeazambuja/ros2_open_voc_landing_heatmap/assets/6606382/30f753bc-2c21-4e29-aae6-359dadf571bb)
 
-<video src="assets/videos/output_rgb_004.mp4" controls="controls" style="max-width: 730px;"></video>
+![output_rgb_005](https://github.com/ricardodeazambuja/ros2_open_voc_landing_heatmap/assets/6606382/b678c673-fb33-4fe3-897a-553ef407cf20)
 
-<video src="assets/videos/output_rgb_005.mp4" controls="controls" style="max-width: 730px;"></video>
+![output_rgb_006](https://github.com/ricardodeazambuja/ros2_open_voc_landing_heatmap/assets/6606382/3af39b72-b3de-4bf8-8053-abf767bf8ff0)
 
-<video src="assets/videos/output_rgb_006.mp4" controls="controls" style="max-width: 730px;"></video>
-
-<video src="assets/videos/output_rgb_007.mp4" controls="controls" style="max-width: 730px;"></video>
+![output_rgb_007](https://github.com/ricardodeazambuja/ros2_open_voc_landing_heatmap/assets/6606382/b5b13052-cb03-4123-91a5-6eb804938d59)
 
 
 ## Known Problems and Future Improvements
