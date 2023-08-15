@@ -323,9 +323,9 @@ class LandingModule(Node):
                                                 depth.shape[0]//self.depth_decimation_factor), cv2.INTER_AREA)
 
         # self.safety_radius and self.proj are in metres
-        safety_radius_pixels = int((depth_proj_resized.shape[1]/2)*self.safety_radius/self.proj)
+        depth_safety_radius_pixels = int((depth_proj_resized.shape[1]/2)*self.safety_radius/self.proj)
         mask = np.zeros_like(depth_proj_resized)
-        mask = cv2.circle(mask, (depth_proj_resized.shape[1]//2,depth_proj_resized.shape[0]//2), safety_radius_pixels, 255, -1)
+        mask = cv2.circle(mask, (depth_proj_resized.shape[1]//2,depth_proj_resized.shape[0]//2), depth_safety_radius_pixels, 255, -1)
 
         depth_proj_resized[mask!=255] = depth_proj_resized.max()
         depth_std = depth_proj_resized[mask==255].std()
