@@ -38,6 +38,8 @@ from message_filters import ApproximateTimeSynchronizer, Subscriber
 from cv_bridge import CvBridge
 
 
+IGNORE_FOCUS = False # used for ablation experiments
+
 # We use the same FOV from the camera in the stereo pair for the 
 # semantic sementation because the second doesn't need a precise projection
 FOV = math.radians(73) #TODO: get this from the camera topic...
@@ -396,6 +398,10 @@ class LandingModule(Node):
             self.safety_radius_pixels = self.focus_mask_radius_max
     
         self.focus_mask_radius += (self.safety_radius_pixels - self.focus_mask_radius)*0.1
+        
+        if IGNORE_FOCUS:
+            self.focus_mask_radius = self.focus_mask_radius_max
+
         mask = np.zeros_like(tmp_thresh)
         mask = cv2.circle(mask, (int(heatmap_center[1]),int(heatmap_center[0])), int(self.focus_mask_radius), 255, -1)
         tmp_thresh[mask!=255] = 0.0

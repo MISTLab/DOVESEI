@@ -21,6 +21,9 @@ from sensor_msgs.msg import Imu
 from cv_bridge import CvBridge
 
 
+IGNORE_NEGATIVE_PROMPTS = False # used for ablation experiments
+IGNORE_PROMPT_ENGINEERING = False # used for ablation experiments
+
 CLIPSEG_OUTPUT_SIZE = 352
 DYNAMIC_THRESHOLD_MAXSTEPS = 100
 class GenerateLandingHeatmap(Node):
@@ -73,7 +76,10 @@ class GenerateLandingHeatmap(Node):
         assert len(negative_prompts)>0, "You must supply at least one negative prompt!"
         assert len(positive_prompts)>0, "You must supply at least one positive prompt!"
         prompts = negative_prompts + positive_prompts
-        prompts = [prompt_engineering.format(p) for p in prompts]
+        if IGNORE_NEGATIVE_PROMPTS:
+            prompts = positive_prompts
+        if not IGNORE_PROMPT_ENGINEERING:
+            prompts = [prompt_engineering.format(p) for p in prompts]
 
         with torch.inference_mode():
             # TODO: recycle old prompts to avoid encoding the same prompts multiple times...
@@ -84,10 +90,20 @@ class GenerateLandingHeatmap(Node):
                 else:
                     inputs[k] = inputs[k]
             logits = model(**inputs).logits
-            logits = logits.softmax(dim=0).detach().cpu().numpy()
+            if not IGNORE_NEGATIVE_PROMPTS:
+                logits = logits.softmax(dim=0).detach().cpu().numpy()
+            else:
+                # Without the negative prompts the softmax won't work 
+                # because we sum all the positive prompt results later on
+                logits = logits.detach().cpu().numpy()
 
         # Keep only the positive prompts
         logits = logits[-len(positive_prompts):].sum(axis=0)
+
+        if IGNORE_NEGATIVE_PROMPTS:
+            # Without the negative prompts it's necessary 
+            # another way to define a normalisation (pseudo-probability)
+            logits = logits/logits.max()
 
         # Blur to smooth the ViT patches
         logits = cv2.blur(logits,(blur_kernel_size, blur_kernel_size))
