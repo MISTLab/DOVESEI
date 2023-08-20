@@ -114,6 +114,9 @@ Risking repeating the introduction, the primary motivation behind this work is t
 
 However, previous works have shown that "with great generalisation power comes lower accuracy", and this is a trade-off that this work hopes to investigate deeper in the future. Finally, the field of prompt engineering is quite new and any development could bring improvements to this work probably without the need of training an expensive new model.
 
+# Acknowledgments
+This work was supported by the National Research Council Canada (NRC).
+
 # TODO
 * Improve code structure
 * Change parameter names to make them easier to understand (and choose a naming convention to follow...)
