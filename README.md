@@ -31,7 +31,7 @@ Main Processing Node splits the landing process into six distinct states:
 1. `SEARCHING`: Coarse search for a landing spot from a safe altitude
 2. `AIMING`: Refined search to better align the UAV with safe landing spot
 3. `LANDING`: Descend while checking for dynamic obstacles
-4. `WAITING`: Stop and wait for a certain amount of time if the obstacles where detected after it started landing
+4. `WAITING`: Stop and wait for a certain amount of time if the obstacles were detected after it started landing
 5. `CLIMBING`: Climb back to a safe altitude where there are no obstacles if the waiting phase took too long
 6. `RESTARTING`: Restart the coarse search by moving away from the last tentative landing spot
 
