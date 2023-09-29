@@ -50,7 +50,7 @@ The `AIMING` state was devised to help the system better centre the UAV before s
 When the XY error falls below a certain threshold (user defined parameter), the system enters the `LANDING` state. At this state the UAV descends with a speed that decreases as it gets closers to the ground. The same "focus" strategy used during the `AIMING` state is used here, but its range is reduced. Lateral movements are not allowed as this system was devised for a simple setup using a UAV without precise odometry, any means to map the environment or sensors to detect possible lateral collisions. In the event of a change in the enviroment suggesting the area below the UAV is not safe for landing anymore, the system switches momentaneously to the `WAITING` state. Otherwise it will descend until it reaches the pre-programmed altitude where the landing control is passed to the UAV's flight controller.
 
 
-#### 4. `WAITING`: Stop and wait for a certain amount of time if the obstacles where detected after it started landing
+#### 4. `WAITING`: Stop and wait for a certain amount of time if the obstacles were detected after it started landing
 While the system is in the `LANDING` state, it will stop and switch to `WAITING` whenever it detects a change in the area projected for landing that suggests it's become unsafe. At the moment it enters the current state all movements stop and a timer is started. If the amount of time in this state is bigger than a pre-programmed parameter, the system considers the current position a failed landing procedure and switches to the `CLIMBING` state, otherwise it will switch back to `LANDING` as soon as the projected landing area below the UAV becomes free of obstacles. 
 
 
