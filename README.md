@@ -117,7 +117,5 @@ However, previous works have shown that "with great generalisation power comes l
 # Acknowledgments
 This work was supported by the National Research Council Canada (NRC).
 
-# TODO
-* Improve code structure
-* Change parameter names to make them easier to understand (and choose a naming convention to follow...)
-* Add more details to this README file
+# Publication
+For more information on DOVESEI, refer to our paper: https://arxiv.org/abs/2308.11471
