@@ -64,7 +64,7 @@ The `RESTARTING` state is aimed at avoiding getting stuck in a local minima wher
 ## Implementation and Use
 The system was designed as a ROS 2 service and a main processing node. It expects to have available topics publishing RGB images, depth images and the coordinate frames (world / map and UAV / camera) - the coordinate frames are used only to read the UAV's above ground level (AGL) altitude, and it will publish velocity commands. The nodes themselves don't have any special dependency in relation to ROS 2 (tested only on Galactic), but they expect a system with Pytorch 1.13 and Huggingface Transformers 4.30.2. You can find a docker image and instruction in how to use it [here](https://github.com/ricardodeazambuja/ros2_quad_sim_python), but launch the docker container (from the directory where you cloned this repository, don´t forget to ask git to get the submodules with `git clone --recurse-submodules`) using:
 ```
-launch_ros2_desktop.sh -g --image ricardodeazambuja/ros2_quad_sim_python:pytorch
+./launch_ros2_desktop.sh -g --image ricardodeazambuja/ros2_quad_sim_python:pytorch
 ```
 (you can find the Dockerfiles [here](https://github.com/ricardodeazambuja/ros2_quad_sim_python/tree/main/docker))
 
