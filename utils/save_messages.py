@@ -1,17 +1,12 @@
 import sys
-
 import cv2
-
 from sensor_msgs.msg import Image as ImageMsg
 from message_filters import ApproximateTimeSynchronizer, Subscriber
 import rclpy
 from rclpy.node import Node
 from cv_bridge import CvBridge
 
-
-
 class ImageSaving(Node):
-
     def __init__(self, depth_flag, folder):
         super().__init__('image_saving_module')
         self.depth_flag = depth_flag
@@ -39,7 +34,7 @@ class ImageSaving(Node):
             ],
                 queue_size=queue_size,
                 slop=delay_btw_msgs,
-                allow_headerless=False
+                allow_headerless = False
                 )
         
         tss.registerCallback(self.save_messages)
@@ -67,8 +62,8 @@ class ImageSaving(Node):
 
 def main():
     depth = False
-    folder="saved_imgs"
-    if len(sys.argv)>1:
+    folder = "saved_imgs"
+    if len(sys.argv) > 1:
         if "depth" in sys.argv[1:]:
             depth = True
         for arg in sys.argv[1:]:
@@ -82,7 +77,6 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
-        # image_saving_module.on_shutdown_cb()
         rclpy.shutdown()
 
 if __name__ == '__main__':
