@@ -1,6 +1,5 @@
 """
 Autonomous landing module  
-
 Uses semantic segmentation and depth data to detect safe landing zones.
 Controls UAV movement and landing approach.
 """
@@ -10,39 +9,27 @@ import math
 from enum import Enum
 from dataclasses import dataclass
 import json
-
 import numpy as np
 import cv2
-
-
 from ros2_open_voc_landing_heatmap_srv.srv import GetLandingHeatmap
 from sensor_msgs.msg import Image as ImageMsg
 from geometry_msgs.msg import Twist
-
 import rclpy
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
-# from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.time import Time, Duration
 from rcl_interfaces.msg import SetParametersResult
-
 from tf2_ros import TransformException
 from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
-
-
 from message_filters import ApproximateTimeSynchronizer, Subscriber
-
-
 from cv_bridge import CvBridge
 
+IGNORE_FOCUS = False # Used for ablation experiments
 
-IGNORE_FOCUS = False # used for ablation experiments
-
-# We use the same FOV from the camera in the stereo pair for the 
-# semantic sementation because the second doesn't need a precise projection
-FOV = math.radians(73) #TODO: get this from the camera topic...
+# We use the same FOV from the camera in the stereo pair for the semantic sementation because the second doesn't need a precise projection
+FOV = math.radians(73) #TODO: get this from the camera topic.
 
 negative_prompts = ["building, house, apartment-building, warehouse, shed, garage", 
                     "roof, rooftop, terrace, shelter, dome, canopy, ceiling", 
@@ -63,7 +50,6 @@ PROMPT_ENGINEERING = "a bird's eye view of a {}, ingame screen shot, bad graphic
 NEGATIVE_PROMPTS = ";".join(negative_prompts)
 POSITIVE_PROMPTS = ";".join(positive_prompts)
 
-
 class LandingState(Enum):
     SEARCHING = 0 
     AIMING = 1
@@ -78,8 +64,8 @@ class LandingState(Enum):
 @dataclass
 class LandingStatus:
     state: LandingState = LandingState.SEARCHING
-    is_safe_altitude: bool = False    # UAV can move in the XY directions safely
-    is_xy_err_below_thr: bool = False            # UAV can descend safely, segmentation shows no obstacles
+    is_safe_altitude: bool = False          # UAV can move in the XY directions safely
+    is_xy_err_below_thr: bool = False       # UAV can descend safely, segmentation shows no obstacles
     is_depth_collision_free: bool = False   # UAV can descend safely, depth shows no obstacles
     is_depth_flat: bool = False             # UAV can land safely, ground is flat (enough)
     conservative_gain: float = 1.0
@@ -89,43 +75,41 @@ class LandingStatus:
     curr_threshold: float = 0.0
     heatmap_received: bool = False
 
-
 class LandingModule(Node):
-
-    def __init__(self, debug=False, savefile=None):
+    def __init__(self, debug = False, savefile = None):
         super().__init__('landing_module')
         self.declare_parameter('img_topic', '/carla/flying_sensor/rgb_down/image')
         self.declare_parameter('depth_topic', '/carla/flying_sensor/depth_down/image')
         self.declare_parameter('heatmap_topic', '/heatmap')
         self.declare_parameter('depth_proj_topic', '/depth_proj')
         self.declare_parameter('twist_topic', '/quadctrl/flying_sensor/ctrl_twist_sp')
-        self.declare_parameter('beta', 1/20)
-        self.declare_parameter('gain', 0.5)
-        self.declare_parameter('aiming_gain_mult', 0.5)
+        self.declare_parameter('beta', 1 / 20)
+        self.declare_parameter('gain', .5)
+        self.declare_parameter('aiming_gain_mult', .5)
         self.declare_parameter('z_speed_landing', 3.0)
-        self.declare_parameter('z_min_speed_landing', 0.5)
-        self.declare_parameter('z_gain_landing', 0.02)
+        self.declare_parameter('z_min_speed_landing', .5)
+        self.declare_parameter('z_gain_landing', .02)
         self.declare_parameter('z_speed_climbing', 6.0)
-        self.declare_parameter('depth_smoothness', 0.5) # CARLA's values oscillate on flat surfaces
+        self.declare_parameter('depth_smoothness', .5) # CARLA's values oscillate on flat surfaces
         self.declare_parameter('depth_decimation_factor', 10)
         self.declare_parameter('altitude_landed', 1.5)
         self.declare_parameter('safe_altitude', 50)
         self.declare_parameter('safety_radius', 1.5)
-        self.declare_parameter('safety_threshold', 0.8)
-        self.declare_parameter('dist_func_threshold', 0.6)
+        self.declare_parameter('safety_threshold', .8)
+        self.declare_parameter('dist_func_threshold', .6)
         self.declare_parameter('giveup_after_sec', 5)
         self.declare_parameter('max_depth_sensing', 20)
         self.declare_parameter('use_random_search4new_place', False)
         self.declare_parameter('search4new_place_max_time', 60)
-        self.declare_parameter('max_landing_time_sec', 5*60)
-        self.declare_parameter('min_conservative_gain', 0.5)
+        self.declare_parameter('max_landing_time_sec', 5 * 60)
+        self.declare_parameter('min_conservative_gain', .5)
         self.declare_parameter('sensor_warm_up_cycles', 5)
         self.declare_parameter('negative_prompts', NEGATIVE_PROMPTS)
         self.declare_parameter('positive_prompts', POSITIVE_PROMPTS)
         self.declare_parameter('blur_kernel_size', 15)
-        self.declare_parameter('seg_dynamic_threshold',0.10)
+        self.declare_parameter('seg_dynamic_threshold',.10)
         self.declare_parameter('prompt_engineering', PROMPT_ENGINEERING)
-        self.declare_parameter('aiming_descending_mult', 0.5)
+        self.declare_parameter('aiming_descending_mult', .5)
 
         img_topic = self.get_parameter('img_topic').value
         depth_topic = self.get_parameter('depth_topic').value
@@ -200,44 +184,32 @@ class LandingModule(Node):
                         "prompt_engineering": self.prompt_engineering
                         }
         self.savedict[0] = self.curr_params
-
         self.cycles = 0
-        
         self.proj = 0
-
         self.heatmap_result = None
         self.rgbmsg = None
         self.depthmsg = None
-
         self.mov_avg_counter = 0
-
         self.heatmap_filtered = None
         self.focus_mask_radius = None
-
         self.img_msg = None
-
         self.giveup_landing_timer = 0
-
         self.search4new_place_timer = 0
-
-        self.search4new_place_direction = (0,0)
-
+        self.search4new_place_direction = (0, 0)
         self.int_x = 0.0
         self.int_y = 0.0
         self.int_x_sat = self.int_y_sat = 1.0
-
         self.landing_status = LandingStatus()
-
         self.cli = self.create_client(GetLandingHeatmap, 'generate_landing_heatmap',
                                       callback_group=ReentrantCallbackGroup())
-        while not self.cli.wait_for_service(timeout_sec=1.0):
+        while not self.cli.wait_for_service(timeout_sec = 1.0):
             self.get_logger().warn('generate_landing_heatmap service not available, waiting again...')
         self.req = GetLandingHeatmap.Request()
         self.cv_bridge = CvBridge()
                 
-        self.twist_pub = self.create_publisher(Twist, twist_topic,1)
-        self.heatmap_pub = self.create_publisher(ImageMsg, heatmap_topic,1)
-        self.depth_proj_pub = self.create_publisher(ImageMsg, depth_proj_topic,1)
+        self.twist_pub = self.create_publisher(Twist, twist_topic, 1)
+        self.heatmap_pub = self.create_publisher(ImageMsg, heatmap_topic, 1)
+        self.depth_proj_pub = self.create_publisher(ImageMsg, depth_proj_topic, 1)
         self.state_pub = self.create_publisher(ImageMsg, 'lander_state', 1)
 
         self.tf_trials = 5
@@ -245,7 +217,7 @@ class LandingModule(Node):
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
         queue_size = 1
-        delay_btw_msgs = 0.02 #TODO: test if this value is causing any problems...
+        delay_btw_msgs = .02 #TODO: Test if this value is causing any problems.
         tss = ApproximateTimeSynchronizer(
             [Subscriber(self, ImageMsg, img_topic),
              Subscriber(self, ImageMsg, depth_topic)],
@@ -253,12 +225,11 @@ class LandingModule(Node):
              delay_btw_msgs
              )
 
-        self.init_time_sec = self.get_clock().now().nanoseconds/1E9
-        self.prev_time_sec = self.get_clock().now().nanoseconds/1E9
+        self.init_time_sec = self.get_clock().now().nanoseconds / 1E9
+        self.prev_time_sec = self.get_clock().now().nanoseconds / 1E9
         tss.registerCallback(self.sense_and_act)
 
         self.get_logger().info('Ready to publish some twist messages!')
-
 
     def parameters_callback(self, params):
         for param in params:
@@ -271,16 +242,13 @@ class LandingModule(Node):
                 return SetParametersResult(successful=False)
         return SetParametersResult(successful=True)
     
-
-    def get_tf(self, t=0.0, timeout=1.0, map_frame="map", target_frame="flying_sensor"):
-        """Only needed to grab the altitude so we can simulate 
-        the altitude estimation received from a real flight controller
-        """
+    def get_tf(self, t = 0.0, timeout = 1.0, map_frame = "map", target_frame = "flying_sensor"):
+        # Only needed to grab the altitude so we can simulate the altitude estimation received from a real flight controller
         try:
-            now = Time(nanoseconds=t)
+            now = Time(nanoseconds = t)
             trans = self.tf_buffer.lookup_transform(map_frame, target_frame,
                 now,
-                timeout=Duration(seconds=timeout))
+                timeout = Duration(seconds = timeout))
 
             self.get_logger().debug(f'TF received {trans}')
             curr_pos = [trans.transform.translation.x, 
@@ -294,24 +262,18 @@ class LandingModule(Node):
 
             s = trans.header.stamp.sec
             ns = trans.header.stamp.nanosec
-            return (s + ns/1E9), curr_pos, curr_quat
+            return (s + ns / 1E9), curr_pos, curr_quat
 
         except TransformException as ex:
             self.get_logger().error(f'Could not transform {map_frame} to {target_frame}: {ex}')
 
-
     def get_depth_stats(self, depthmsg):
-        """Masks the depth image received leaving only a circle
-        that approximates the UAV's safety radius projected according 
-        to its current altitude
-        """
+        # Masks the depth image received leaving only a circle that approximates the UAV's safety radius projected according to its current altitude.
         max_dist = self.max_depth_sensing
-
         depth = self.cv_bridge.imgmsg_to_cv2(depthmsg, desired_encoding='passthrough')
 
-        # In CARLA the depth goes up to 1000m, but we want 
-        # any value bigger than max_dist to become max_dist
-        depth[depth>max_dist] = max_dist
+        # In CARLA the depth goes up to 1000m, but we want Any value bigger than max_dist to become max_dist
+        depth[depth > max_dist] = max_dist
         
         # To make sure we won't ignore those points
         depth[np.logical_not(np.isfinite(depth))] = 0.0
@@ -320,34 +282,32 @@ class LandingModule(Node):
         # therefore they can't ignore the "holes" in the calculated disparity of real sensors.
         # By resising with cv2.INTER_AREA if the areas with zeros are too many/big they will bring 
         # the values down and the system will automatically react more conservativelly if uncertainty creeps in
-        # TODO: find a better way to take into account the holes...
+        # TODO: find a better way to take into account the holes.
         depth_proj_resized = cv2.resize(depth, (depth.shape[1]//self.depth_decimation_factor,
                                                 depth.shape[0]//self.depth_decimation_factor), cv2.INTER_AREA)
 
         # self.safety_radius and self.proj are in metres
-        depth_safety_radius_pixels = int((depth_proj_resized.shape[1]/2)*self.safety_radius/self.proj)
+        depth_safety_radius_pixels = int((depth_proj_resized.shape[1] / 2) * self.safety_radius / self.proj)
         mask = np.zeros_like(depth_proj_resized)
         mask = cv2.circle(mask, (depth_proj_resized.shape[1]//2,depth_proj_resized.shape[0]//2), depth_safety_radius_pixels, 255, -1)
 
-        depth_proj_resized[mask!=255] = depth_proj_resized.max()
-        depth_std = depth_proj_resized[mask==255].std()
-        depth_min = depth_proj_resized[mask==255].min()
+        depth_proj_resized[mask != 255] = depth_proj_resized.max()
+        depth_std = depth_proj_resized[mask == 255].std()
+        depth_min = depth_proj_resized[mask == 255].min()
         
-        img_msg = self.cv_bridge.cv2_to_imgmsg((255*depth_proj_resized/max_dist).astype('uint8'), encoding='mono8')
+        img_msg = self.cv_bridge.cv2_to_imgmsg((255 * depth_proj_resized / max_dist).astype('uint8'), encoding = 'mono8')
         img_msg.header.frame_id = depthmsg.header.frame_id
         img_msg.header.stamp = self.get_clock().now().to_msg()
         self.depth_proj_pub.publish(img_msg)
+      
         return depth_std, depth_min
 
-
-
     def get_xy_error_from_semantics(self, heatmap_msg):
-        """Normalized XY error according to the best place to land defined by the heatmap
-        received from the generate_landing_heatmap service
-        The heatmap received will be a mono8 image where the higher the value 
-        the better the place for landing.
         """
-        heatmap = self.cv_bridge.imgmsg_to_cv2(heatmap_msg, desired_encoding='mono8')
+        Normalized XY error according to the best place to land defined by the heatmap received from the generate_landing_heatmap service
+        The heatmap received will be a mono8 image where the higher the value the better the place for landing.
+        """
+        heatmap = self.cv_bridge.imgmsg_to_cv2(heatmap_msg, desired_encoding = 'mono8')
        
         # Debug
         # heatmap = np.zeros(heatmap.shape, dtype=heatmap.dtype)
@@ -356,63 +316,62 @@ class LandingModule(Node):
 
         # Reduce the received heatmap size
         resize_h = 352
-        resize_w = int(resize_h*(heatmap.shape[1]/heatmap.shape[0]))
-        resize_w = resize_w + 1-(resize_w % 2) # always odd
+        resize_w = int(resize_h*(heatmap.shape[1] / heatmap.shape[0]))
+        resize_w = resize_w + 1 - (resize_w % 2) # Always odd
 
-        heatmap_resized = cv2.resize(heatmap,
-                                     (resize_w,resize_h),cv2.INTER_AREA)
+        heatmap_resized = cv2.resize(heatmap,(resize_w, resize_h), cv2.INTER_AREA)
 
         if self.heatmap_filtered is None:
             self.heatmap_filtered = heatmap_resized.astype(float)
 
         if self.focus_mask_radius is None:
-            self.focus_mask_radius = math.sqrt(resize_w**2+resize_h**2)
+            self.focus_mask_radius = math.sqrt(resize_w**2 + resize_h**2)
             self.focus_mask_radius_max = self.focus_mask_radius
             self.safety_radius_pixels = 0
         
         # Add the received heatmap to the buffer
-        self.heatmap_filtered += self.beta*(heatmap_resized-self.heatmap_filtered)
+        self.heatmap_filtered += self.beta * (heatmap_resized - self.heatmap_filtered)
         heatmap_resized = self.heatmap_filtered.astype('uint8')
 
-        heatmap_center = np.asarray([heatmap_resized.shape[0]/2, heatmap_resized.shape[1]/2])
+        heatmap_center = np.asarray([heatmap_resized.shape[0] / 2, heatmap_resized.shape[1] / 2])
         
-        # add a black border to avoid problems with distanceTransform
-        heatmap_resized[:,0] = 0
-        heatmap_resized[:,-1] = 0
-        heatmap_resized[0,:] = 0
-        heatmap_resized[-1,:] = 0
+        # Add a black border to avoid problems with distanceTransform
+        heatmap_resized[:, 0] = 0
+        heatmap_resized[:, -1] = 0
+        heatmap_resized[0, :] = 0
+        heatmap_resized[-1, :] = 0
         
-        _,tmp_thresh = cv2.threshold(heatmap_resized,127,255,cv2.THRESH_BINARY)
+        _,tmp_thresh = cv2.threshold(heatmap_resized, 127, 255, cv2.THRESH_BINARY)
 
         radius_mult = 6 if self.landing_status.state == LandingState.AIMING else 2
 
         if self.landing_status.state == LandingState.AIMING:
             radius_mult = 6
-            self.safety_radius_pixels = int(radius_mult*(tmp_thresh.shape[1]/2)*self.safety_radius/self.proj)
+            self.safety_radius_pixels = int(radius_mult * (tmp_thresh.shape[1] / 2) * self.safety_radius / self.proj)
         elif self.landing_status.state == LandingState.LANDING:
             radius_mult = 2
-            self.safety_radius_pixels = int(radius_mult*(tmp_thresh.shape[1]/2)*self.safety_radius/self.proj)
+            self.safety_radius_pixels = int(radius_mult * (tmp_thresh.shape[1] / 2) * self.safety_radius / self.proj)
         elif self.landing_status.state == LandingState.WAITING:
             self.safety_radius_pixels = self.focus_mask_radius
         else:
             self.safety_radius_pixels = self.focus_mask_radius_max
     
-        self.focus_mask_radius += (self.safety_radius_pixels - self.focus_mask_radius)*0.1
+        self.focus_mask_radius += (self.safety_radius_pixels - self.focus_mask_radius) * .1
         
         if IGNORE_FOCUS:
             self.focus_mask_radius = self.focus_mask_radius_max
 
         mask = np.zeros_like(tmp_thresh)
-        mask = cv2.circle(mask, (int(heatmap_center[1]),int(heatmap_center[0])), int(self.focus_mask_radius), 255, -1)
-        tmp_thresh[mask!=255] = 0.0
+        mask = cv2.circle(mask, (int(heatmap_center[1]), int(heatmap_center[0])), int(self.focus_mask_radius), 255, -1)
+        tmp_thresh[mask != 255] = 0.0
 
-        heatmap_dist_function = cv2.distanceTransform(tmp_thresh, cv2.DIST_L2, maskSize=3)
+        heatmap_dist_function = cv2.distanceTransform(tmp_thresh, cv2.DIST_L2, maskSize = 3)
         cv2.normalize(heatmap_dist_function, heatmap_dist_function, 0, 1.0, cv2.NORM_MINMAX)
                
         # Check area, perimeter, distance from center
         _, dist_thrs = cv2.threshold(heatmap_dist_function, self.dist_func_threshold, 1.0, cv2.THRESH_BINARY)
         contours,_ = cv2.findContours(dist_thrs.astype('uint8'), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        xy_idx = [[1.0,0]] # if nothing is found below, move forward
+        xy_idx = [[1.0, 0]] # If nothing is found below, move forward
         objective_values = [0.0]
         for cnt in contours:
             area = cv2.contourArea(cnt)
@@ -420,39 +379,40 @@ class LandingModule(Node):
             if (area == 0) or (perimeter == 0):
                 continue
             mask = np.zeros_like(heatmap_dist_function)
-            cv2.drawContours(mask, [cnt], contourIdx=-1, color=(255), thickness=cv2.FILLED)
-            # now mask has only the current contour (filled)
+            cv2.drawContours(mask, [cnt], contourIdx = -1, color = (255), thickness = cv2.FILLED)
+            # Now mask has only the current contour (filled)
             dist_cnt = heatmap_dist_function.copy()
-            # using the previously masked heatmap, we expose only the pixels under the contour
-            dist_cnt[mask!=255] = 0.0
+            # Using the previously masked heatmap, we expose only the pixels under the contour
+            dist_cnt[mask != 255] = 0.0
             cx, cy = np.unravel_index(dist_cnt.argmax(), dist_cnt.shape)
-            dist2center = np.sqrt(((heatmap_center-[cx,cy])**2).sum())
-            objective = (1/perimeter)*area/(dist2center+1) # complex shapes will have longer perimeter
+            dist2center = np.sqrt(((heatmap_center - [cx, cy])**2).sum())
+            objective = (1 / perimeter)*area/(dist2center + 1) # Complex shapes will have longer perimeter
             objective_values.append(objective)
-            x = (heatmap_center[0] - cx)/heatmap_resized.shape[0]
-            y = -(heatmap_center[1] - cy)/heatmap_resized.shape[1]
-            xy_idx.append([x,y])
+            x = (heatmap_center[0] - cx) / heatmap_resized.shape[0]
+            y = -(heatmap_center[1] - cy) / heatmap_resized.shape[1]
+            xy_idx.append([x, y])
         xy_idx = np.asarray(xy_idx)
         desc_order = np.argsort(objective_values)[::-1]
         xy_idx = xy_idx[desc_order]
 
-        yc = int(-(xy_idx[0,0]*heatmap_resized.shape[0]-heatmap_center[0]))
-        xc = int(xy_idx[0,1]*heatmap_resized.shape[1]+heatmap_center[1])
-        img = cv2.circle(cv2.cvtColor((dist_thrs*255).astype('uint8'), cv2.COLOR_GRAY2BGR), (xc,yc), 10, (0,255,0), -1) # best location (green)
-        if xy_idx.shape[0]>1:
-            yc = int(-(xy_idx[1,0]*heatmap_resized.shape[0]-heatmap_center[0]))
-            xc = int(xy_idx[1,1]*heatmap_resized.shape[1]+heatmap_center[1])
-            img = cv2.circle(img, (xc,yc), 10, (255,0,0), -1) # second in line (blue)
-        img_msg = self.cv_bridge.cv2_to_imgmsg(img, encoding="bgr8")
+        yc = int(-(xy_idx[0, 0] * heatmap_resized.shape[0] - heatmap_center[0]))
+        xc = int(xy_idx[0, 1] * heatmap_resized.shape[1] + heatmap_center[1])
+        img = cv2.circle(cv2.cvtColor((dist_thrs * 255).astype('uint8'), cv2.COLOR_GRAY2BGR), (xc, yc), 10, (0, 255, 0), -1) # Best location (green)
+        if xy_idx.shape[0] > 1:
+            yc = int(-(xy_idx[1, 0] * heatmap_resized.shape[0] - heatmap_center[0]))
+            xc = int(xy_idx[1, 1] * heatmap_resized.shape[1] + heatmap_center[1])
+            img = cv2.circle(img, (xc, yc), 10, (255, 0, 0), -1) # Second in line (blue)
+        img_msg = self.cv_bridge.cv2_to_imgmsg(img, encoding = "bgr8")
 
         img_msg.header.frame_id = heatmap_msg.header.frame_id
         img_msg.header.stamp = self.get_clock().now().to_msg()
         self.heatmap_pub.publish(img_msg)
+      
         return xy_idx
 
-
     def get_altitude(self):
-        """Simulate the altitude read from the flight controller internal estimation
+        """
+        Simulate the altitude read from the flight controller internal estimation
         TODO: a real UAV may use AGL (rangefinder), MSL (barometer) or a mixture
         """
         res = self.get_tf()
@@ -464,19 +424,18 @@ class LandingModule(Node):
 
     def publish_twist(self, x, y, z):
         twist_msg = Twist()
-        # The UAV's maximum bank angle is limited to a very small value
-        # and this is why such a simple control works.
-        # Additionally, the assumption is that the maximum speed is very low
-        # otherwise the moving average used in the semantic segmentation will break.
-        # TODO: make it a proper controller ...
-        
+        """
+        The UAV's maximum bank angle is limited to a very small value and this is why such a simple control works.
+        Additionally, the assumption is that the maximum speed is very low otherwise the moving average used in the semantic segmentation will break.
+        TODO: Make it a proper controller.
+        """
         self.int_x += x
         self.int_y += y     
-        self.int_x = self.int_x if abs(self.int_x) <= self.int_x_sat else np.sign(self.int_x)*self.int_x_sat
-        self.int_y = self.int_y if abs(self.int_y) <= self.int_y_sat else np.sign(self.int_y)*self.int_y_sat
+        self.int_x = self.int_x if abs(self.int_x) <= self.int_x_sat else np.sign(self.int_x) * self.int_x_sat
+        self.int_y = self.int_y if abs(self.int_y) <= self.int_y_sat else np.sign(self.int_y) * self.int_y_sat
 
-        twist_msg.linear.x = float(x * self.gain + self.int_x*self.gain)  # the max bank angle is limited (tiltMax), therefore the gain is here to saturate
-        twist_msg.linear.y = -float(y * self.gain + self.int_y*self.gain)
+        twist_msg.linear.x = float(x * self.gain + self.int_x * self.gain)  # Max bank angle is limited (tiltMax), therefore the gain is here to saturate
+        twist_msg.linear.y = -float(y * self.gain + self.int_y * self.gain)
         twist_msg.linear.z = float(z)
         
         twist_msg.angular.x = 0.0
@@ -489,9 +448,8 @@ class LandingModule(Node):
         else:
             self.get_logger().error("Debug mode active: no velocities published!")
 
-
     def publish_status(self):
-        state_msg = ImageMsg() # easy to break apart without the need for a custom message...
+        state_msg = ImageMsg() # Easy to break apart without the need for a custom message.
         msg_str = str(self.landing_status.state).split('.')[1]
         self.get_logger().info(f'Current state: {msg_str}')
         if self.landing_status.is_safe_altitude:
@@ -515,17 +473,17 @@ class LandingModule(Node):
         else:
             self.get_logger().warn(f"Bumpy ground")
 
-        self.get_logger().info(f"Segmentation threshold: {self.landing_status.curr_threshold:0.3f}")
+        self.get_logger().info(f"Segmentation threshold: {self.landing_status.curr_threshold: .3f}")
         self.get_logger().info(f"Segmentation heatmap_received: {self.landing_status.heatmap_received}")
 
-        msg_str += f"-ALT:{self.landing_status.altitude:.3f}"
-        self.get_logger().info(f"Altitude: {self.landing_status.altitude:0.3f} m")
-        msg_str += f"-CSG:{self.landing_status.conservative_gain:0.3f}"
-        self.get_logger().info(f"Conservative Gain: {self.landing_status.conservative_gain:0.3f}")
-        msg_str += f"-DTS:{self.landing_status.delta_time_sec:0.3f}"
-        self.get_logger().info(f"Loop Freq.: {1/self.landing_status.delta_time_sec:0.3f} Hz")
-        msg_str += f"-ETS:{self.landing_status.elapsed_time_sec:0.3f}"
-        self.get_logger().info(f"Elapsed Time: {self.landing_status.elapsed_time_sec:0.3f} s")
+        msg_str += f"-ALT:{self.landing_status.altitude: .3f}"
+        self.get_logger().info(f"Altitude: {self.landing_status.altitude: .3f} m")
+        msg_str += f"-CSG:{self.landing_status.conservative_gain: .3f}"
+        self.get_logger().info(f"Conservative Gain: {self.landing_status.conservative_gain: .3f}")
+        msg_str += f"-DTS:{self.landing_status.delta_time_sec: .3f}"
+        self.get_logger().info(f"Loop Freq.: {1/self.landing_status.delta_time_sec: .3f} Hz")
+        msg_str += f"-ETS:{self.landing_status.elapsed_time_sec: .3f}"
+        self.get_logger().info(f"Elapsed Time: {self.landing_status.elapsed_time_sec: .3f} s")
         state_msg.header.frame_id = msg_str
         state_msg.header.stamp = self.get_clock().now().to_msg()
         self.state_pub.publish(state_msg)
@@ -539,22 +497,20 @@ class LandingModule(Node):
                 'is_depth_flat': str(self.landing_status.is_depth_flat),
                 'position': self.curr_pos,
                 'conservative_gain': self.landing_status.conservative_gain,
-                'loop_freq': 1/self.landing_status.delta_time_sec,
+                'loop_freq': 1 / self.landing_status.delta_time_sec,
                 'curr_threshold': self.landing_status.curr_threshold,
                 'heatmap_received': self.landing_status.heatmap_received
             }
             self.savedict[int(self.landing_status.elapsed_time_sec*1000)] = tmp_dict
 
-
     def sense_and_act(self, rgbmsg, depthmsg):
         if self.heatmap_result is None:
-            # Beware: spaghetti-code state machine below!
-            curr_time_sec = self.get_clock().now().nanoseconds/1E9
+            curr_time_sec = self.get_clock().now().nanoseconds / 1E9
             self.landing_status.delta_time_sec = curr_time_sec - self.prev_time_sec
             if self.landing_status.delta_time_sec == 0:
                 return
             self.prev_time_sec = curr_time_sec
-            self.landing_status.elapsed_time_sec = curr_time_sec-self.init_time_sec
+            self.landing_status.elapsed_time_sec = curr_time_sec - self.init_time_sec
 
             self.landing_status.altitude = self.get_altitude()
             if self.landing_status.altitude is None:
@@ -568,24 +524,23 @@ class LandingModule(Node):
             negative_prompts = self.negative_prompts
             positive_prompts = self.positive_prompts
 
-            self.proj = math.tan(FOV/2)*self.landing_status.altitude # [m] it's half width because FOV/2
+            self.proj = math.tan(FOV/2)*self.landing_status.altitude # [m] It's half width because FOV/2
 
             # The conservative_gain is a very simple (hacky?) way to force the system to relax its decisions as time passes 
             # because at the end of the day it will be limited by its battery and the worst scenario is to fall from the sky
-            # - flatness (is_depth_flat_dynamic_decision)
-            # - minimum distance to obstacles (is_depth_collision_free_dynamic_decision)
-            # - maximum acceptable heatmap location error before switching to landing (is_xy_err_below_thr_dynamic_decision)
-            conservative_gain = 1-np.exp(1-self.max_landing_time_sec/self.landing_status.elapsed_time_sec)
+            # - Flatness (is_depth_flat_dynamic_decision)
+            # - Minimum distance to obstacles (is_depth_collision_free_dynamic_decision)
+            # - Maximum acceptable heatmap location error before switching to landing (is_xy_err_below_thr_dynamic_decision)
+            conservative_gain = 1 - np.exp(1 - self.max_landing_time_sec / self.landing_status.elapsed_time_sec)
             self.landing_status.conservative_gain = conservative_gain if conservative_gain > self.min_conservative_gain else self.min_conservative_gain
         
             depth_std, depth_min = self.get_depth_stats(depthmsg)
-            self.get_logger().info(f"Depth STD, MIN: {depth_std:.2f},{depth_min:.2f}")
+            self.get_logger().info(f"Depth STD, MIN: {depth_std: .2f},{depth_min: .2f}")
 
-
-            #TODO: research a solution to sync service call and received messages better than this...
+            #TODO: Research a solution to sync service call and received messages better.
             #request.image, request.positive_prompts, request.negative_prompts, request.erosion_size
             self.req.image = rgbmsg
-            # the service expects a string of prompts separated by ';'
+            # Service expects a string of prompts separated by ';'
             self.req.positive_prompts = positive_prompts
             self.req.negative_prompts = negative_prompts
             self.req.safety_threshold = self.safety_threshold
@@ -599,13 +554,13 @@ class LandingModule(Node):
                 if future.result().success == True:
                     heatmap_msg = future.result().heatmap
                     xy_err = self.get_xy_error_from_semantics(heatmap_msg)
-                    x,y,z = self.state_update(curr_time_sec, xy_err, depth_std, depth_min)
+                    x, y, z = self.state_update(curr_time_sec, xy_err, depth_std, depth_min)
                     self.publish_status()
-                    self.publish_twist(x,y,z)
+                    self.publish_twist(x, y, z)
                 else:
-                    x,y,z = self.state_update(curr_time_sec, np.asarray([[1000.0,1000.0]]), 1000.0, 0.0)
+                    x, y, z = self.state_update(curr_time_sec, np.asarray([[1000.0, 1000.0]]), 1000.0, 0.0)
                     self.publish_status()
-                    self.publish_twist(x,y,z)
+                    self.publish_twist(x, y, z)
                     self.get_logger().error("Empty heatmap received!")
                 self.heatmap_result = None
                 if self.landing_status.state == LandingState.LANDED:
@@ -616,33 +571,31 @@ class LandingModule(Node):
 
             return
 
-
     def state_update(self, curr_time_sec, xy_err, depth_std, depth_min):
-        estimated_travelled_distance = self.z_speed*self.landing_status.delta_time_sec # TODO:improve this estimation or add some extra margin
+        estimated_travelled_distance = self.z_speed * self.landing_status.delta_time_sec # TODO: Improve this estimation or add some extra margin
         landed_trigger = (self.landing_status.altitude-estimated_travelled_distance) <= self.altitude_landed
         # xy_err are normalised to the center of the image (-1 to 1)
-        xy_err = xy_err*self.proj
+        xy_err = xy_err * self.proj
         xs_err, ys_err = xy_err[0]
         # Very rudimentary filter
-        adjusted_err = math.sqrt(xs_err**2+ys_err**2)
-        dynamic_threshold = 2*self.safety_radius/self.landing_status.conservative_gain # the segmentation is always noisy, thus the 2x
+        adjusted_err = math.sqrt(xs_err**2 + ys_err**2)
+        dynamic_threshold = 2 * self.safety_radius / self.landing_status.conservative_gain # Segmentation is always noisy, thus the 2x
         self.landing_status.is_xy_err_below_thr = adjusted_err < self.safety_radius
         is_xy_err_below_thr_dynamic_decision = adjusted_err < dynamic_threshold
-        self.get_logger().info(f"Segmentation X,Y ERR, adjusted dist, dynamic threshold: {xs_err:.2f},{-ys_err:.2f},{adjusted_err:.2f},{dynamic_threshold:.2f}")
-        # TODO: improve the flat surface definition
+        self.get_logger().info(f"Segmentation X,Y ERR, adjusted dist, dynamic threshold: {xs_err: .2f},{-ys_err: .2f},{adjusted_err: .2f},{dynamic_threshold: .2f}")
+        # TODO: Improve the flat surface definition
         self.landing_status.is_depth_flat = depth_std < self.depth_smoothness
         is_depth_flat_dynamic_decision = depth_std < self.depth_smoothness/self.landing_status.conservative_gain
-        # TODO: improve the is_depth_collision_free definition
+        # TODO: Improve the is_depth_collision_free definition
         self.landing_status.is_depth_collision_free = depth_min > self.safety_radius or landed_trigger
         is_depth_collision_free_dynamic_decision = self.landing_status.is_depth_collision_free
 
-        descend_while_aiming = (self.landing_status.altitude + estimated_travelled_distance) >= self.safe_altitude*1.1
+        descend_while_aiming = (self.landing_status.altitude + estimated_travelled_distance) >= self.safe_altitude * 1.1
         is_landing = adjusted_err < self.safety_radius and is_depth_collision_free_dynamic_decision and is_depth_flat_dynamic_decision and not descend_while_aiming
         is_aiming = self.landing_status.is_safe_altitude and is_xy_err_below_thr_dynamic_decision and is_depth_collision_free_dynamic_decision and is_depth_flat_dynamic_decision
 
-        # Trying to isolate all the sensing above 
-        # and the state switching decisions below.
-        # TODO: isolate the sensing and state decision in two distinct methods...
+        # Trying to isolate all the sensing above and the state switching decisions below.
+        # TODO: Isolate the sensing and state decision in two distinct methods.
         if landed_trigger:
             self.landing_status.state = LandingState.LANDED
         elif ~np.isfinite(xs_err) or ~np.isfinite(ys_err) or ~np.isfinite(depth_std) or ~np.isfinite(depth_min) or self.cycles < self.sensor_warm_up_cycles:
@@ -667,16 +620,16 @@ class LandingModule(Node):
                     self.landing_status.state = LandingState.RESTARTING
                     if self.search4new_place_timer == 0:
                         if self.use_random_search4new_place:
-                            self.search4new_place_direction = np.random.rand(2)-1 # uniform random [-0.5,0.5] search direction
+                            self.search4new_place_direction = np.random.rand(2)-1 # Uniform random [-.5, .5] search direction
                         else:
                             # xy_err are already ordered according to the objective function 
-                            self.search4new_place_direction = xy_err[1] if len(xy_err)>1 else xy_err[0] # get the next in line...
+                            self.search4new_place_direction = xy_err[1] if len(xy_err) >1 else xy_err[0] # Get the next in line.
                         self.search4new_place_timer = curr_time_sec
                     search4new_place_time_passed = (curr_time_sec - self.search4new_place_timer)
                     if search4new_place_time_passed > self.search4new_place_max_time:
-                        # since the system is biased towards places that are close to the UAV, the best way
+                        # Since the system is biased towards places that are close to the UAV, the best way
                         # to avoid a place where landing doesn't work is to move away from it and towards the next candidate
-                        self.giveup_landing_timer = 0 # safe place, reset giveup_landing_timer
+                        self.giveup_landing_timer = 0 # Safe place, reset giveup_landing_timer
                         self.search4new_place_timer = 0
                         self.landing_status.state = LandingState.SEARCHING
                 else:
@@ -693,23 +646,22 @@ class LandingModule(Node):
             self.gain = self.input_gain
             x = xs_err
             y = ys_err
-            self.int_x = -x  # integrator is only for the AIMING state
-            self.int_y = -y  # integrator is only for the AIMING state
+            self.int_x = -x  # Integrator is only for the AIMING state
+            self.int_y = -y  # Integrator is only for the AIMING state
             z = 0.0
         elif self.landing_status.state == LandingState.AIMING:
             self.gain = self.input_gain*self.aiming_gain_mult
             x = xs_err
             y = ys_err
-            # It's hard to aim when the UAV is too high, so it should descend because 
-            # the AIMING state means there's a good landing spot candidate below anyway
+            # It's hard to aim when the UAV is too high, so it should descend because The AIMING state means there's a good landing spot candidate below anyway
             if descend_while_aiming:
-                self.z_speed = self.aiming_descending_mult*self.z_gain_landing*self.z_speed_landing*self.landing_status.altitude
+                self.z_speed = self.aiming_descending_mult * self.z_gain_landing * self.z_speed_landing * self.landing_status.altitude
                 z = -self.z_speed
             else:
                 z = 0.0
         elif self.landing_status.state == LandingState.LANDING:
             x = y = 0.0
-            self.int_x = self.int_y = 0.0 # integrator is only for the AIMING state
+            self.int_x = self.int_y = 0.0 # Integrator is only for the AIMING state
             self.z_speed = self.z_gain_landing*self.z_speed_landing*self.landing_status.altitude
             self.z_speed = (self.z_speed if self.z_speed > self.z_min_speed_landing else self.z_min_speed_landing)
             z = -self.z_speed
@@ -719,23 +671,21 @@ class LandingModule(Node):
         elif self.landing_status.state == LandingState.WAITING:
             x = y = z = 0.0
         elif self.landing_status.state == LandingState.RESTARTING:
-            x,y = self.search4new_place_direction
+            x, y = self.search4new_place_direction
             z = 0.0
 
-        return x,y,z
-
+        return x, y, z
 
     def on_shutdown_cb(self):
         self.landing_status.state = LandingState.SHUTTING_DOWN
-        self.publish_twist(0,0,0)
+        self.publish_twist(0, 0, 0)
         self.publish_status()
         self.get_logger().error('Shutting down... sending zero velocities!')
-
 
 def main():
     debug = False
     savefile = None
-    if len(sys.argv)>1:
+    if len(sys.argv) > 1:
         if "debug" in sys.argv[1:]:
             debug = True
         for arg in sys.argv[1:]:
