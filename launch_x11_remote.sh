@@ -1,6 +1,6 @@
 #!/bin/bash
 
-tmp_ips=$(hostname -I) # worst scenario: avahi-publish won't do its work...
+tmp_ips=$(hostname -I) # Worst scenario: avahi-publish won't do its work.
 tmp_array=($tmp_ips) 
 avahi-publish -a -R ros2_open_voc_landing_heatmap.local ${tmp_array[0]} &>/dev/null &
 export AVAHI_PUB_PID=$!
