@@ -105,7 +105,7 @@ def generate_launch_description():
         'prompt_engineering': (PROMPT_ENGINEERING, 'Prompt modifier where it will add the prompt (negative or positive) where there is {}'),
    }
    lander_params_lcgf = {k: LaunchConfiguration(k) for k in lander_params.keys()}
-   lander_params_arg = [DeclareLaunchArgument(k, default_value = str(v[0]), description = v[1]) for k,v in lander_params.items()]
+   lander_params_arg = [DeclareLaunchArgument(k, default_value = str(v[0]), description = v[1]) for k, v in lander_params.items()]
    landing_module = Node(
          package = 'ros2_open_voc_landing_heatmap',
          executable = 'lander_publisher',
