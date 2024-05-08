@@ -5,6 +5,7 @@ from message_filters import ApproximateTimeSynchronizer, Subscriber
 import rclpy
 from rclpy.node import Node
 from cv_bridge import CvBridge
+from PIL import Image
 
 class ImageSaving(Node):
     def __init__(self, depth_flag, folder):
@@ -32,28 +33,37 @@ class ImageSaving(Node):
                 Subscriber(self, ImageMsg, heatmap_topic),
                 Subscriber(self, ImageMsg, raw_heatmap_topic)
             ],
-                queue_size=queue_size,
-                slop=delay_btw_msgs,
+                queue_size = queue_size,
+                slop = delay_btw_msgs,
                 allow_headerless = False
                 )
         
         tss.registerCallback(self.save_messages)
         self.get_logger().warn(f'Node started, waiting for messages...')
 
-
     def save_messages(self, statemsg, rgbmsg, depthmsg, heatmapmsg, rawheatmapmsg):
-        elapsed_time_msec = int(float(statemsg.header.frame_id.split('-')[-1].split(':')[1])*1000)
-        rgb = self.cv_bridge.imgmsg_to_cv2(rgbmsg, desired_encoding='bgr8')
-        depth = self.cv_bridge.imgmsg_to_cv2(depthmsg, desired_encoding='passthrough')
-        heatmap = self.cv_bridge.imgmsg_to_cv2(heatmapmsg, desired_encoding='bgr8')
-        rawheatmap = self.cv_bridge.imgmsg_to_cv2(rawheatmapmsg, desired_encoding='passthrough')
+        elapsed_time_msec = int(float(statemsg.header.frame_id.split('-')[-1].split(':')[1]) * 1000)
+        rgb = self.cv_bridge.imgmsg_to_cv2(rgbmsg, desired_encoding = 'bgr8')
+        depth = self.cv_bridge.imgmsg_to_cv2(depthmsg, desired_encoding = 'passthrough')
+        heatmap = self.cv_bridge.imgmsg_to_cv2(heatmapmsg, desired_encoding = 'bgr8')
+        rawheatmap = self.cv_bridge.imgmsg_to_cv2(rawheatmapmsg, desired_encoding = 'passthrough') 
 
         cv2.imwrite(f"{self.folder}/rgb_{elapsed_time_msec:07d}.png", rgb)
+        rgb = Image.open(f"{self.folder}/rgb_{elapsed_time_msec:07d}.png").convert("RGBA")
+
+        cv2.imwrite(f"{self.folder}/heatmap_{elapsed_time_msec:07d}.png", heatmap)
+        heatmap = Image.open(f"{self.folder}/heatmap_{elapsed_time_msec:07d}.png").convert("RGBA").resize((rgb.size))    
+        
+        cv2.imwrite(f"{self.folder}/rawheatmap_{elapsed_time_msec:07d}.png", rawheatmap)
+        rawheatmap = Image.open(f"{self.folder}/rawheatmap_{elapsed_time_msec:07d}.png").convert("RGBA").resize((rgb.size))
+
+        segmentation = Image.blend(heatmap, rawheatmap, .2)
+        blend = Image.blend(rgb, segmentation, .6) 
+        blend.save(f"{self.folder}/blend_{elapsed_time_msec:07d}.png")
+        
         if self.depth_flag:
             cv2.imwrite(f"{self.folder}/depth_{elapsed_time_msec:07d}.png", depth)
-        cv2.imwrite(f"{self.folder}/heatmap_{elapsed_time_msec:07d}.png", heatmap)
-        cv2.imwrite(f"{self.folder}/rawheatmap_{elapsed_time_msec:07d}.png", rawheatmap)
-
+            
         self.get_logger().warn(f"{statemsg.header.frame_id}")
         self.get_logger().warn(f"Image batch {elapsed_time_msec:07d} saved!")
 
