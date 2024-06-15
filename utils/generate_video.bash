@@ -1,6 +1,6 @@
 #!/bin/bash
 
-experiment_folders = ($(ls -d experiment_*)) # Create the experiment name
+experiment_folders=($(ls -d experiment_*)) # Create the experiment name
 
 for i in "${!experiment_folders[@]}"
 do
